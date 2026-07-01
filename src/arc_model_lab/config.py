@@ -23,9 +23,10 @@ class Settings(BaseSettings):
     model_name: str = "flan-t5-base-summarizer"
     model_provider: str = "huggingface"
     model_id: str = "google/flan-t5-base"
+    model_cache_dir: str | None = None
     tokenizer_id: str = "google/flan-t5-base"
     adapter_path: str | None = None
-
+    
     # Generation parameters
     max_input_tokens: int = 1024
     max_new_tokens: int = 256
@@ -34,6 +35,10 @@ class Settings(BaseSettings):
     # HTTP server
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    
+    # App metadata
+    app_name: str = "arc-model-lab"
+    environment: str = "local"
 
 
 @lru_cache

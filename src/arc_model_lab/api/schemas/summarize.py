@@ -1,4 +1,4 @@
-"""HTTP request/response contracts. Independent of the domain layer."""
+"""Request/response contracts for the summarize endpoint."""
 
 from __future__ import annotations
 
@@ -10,6 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class SummarizeRequest(BaseModel):
     input_text: str = Field(min_length=1, description="Text to summarize.")
+    model_name: str | None = Field(
+        default=None,
+        description="Catalog model name to use; defaults to the configured model.",
+    )
 
 
 class SummarizeResponse(BaseModel):

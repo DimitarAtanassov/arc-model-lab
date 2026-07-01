@@ -3,6 +3,7 @@
 
 APP := arc_model_lab
 sources := src
+lint_paths := src tests
 
 .DEFAULT_GOAL := help
 
@@ -16,14 +17,14 @@ prepare:
 
 .PHONY: lintable ## Apply auto-formatting and auto-linting
 lintable: prepare
-	uv run ruff format $(sources)
-	uv run ruff check --fix $(sources)
+	uv run ruff format $(lint_paths)
+	uv run ruff check --fix $(lint_paths)
 
 .PHONY: lint ## Run linting checks
 lint: prepare
 	uv lock --check
-	uv run ruff format --check $(sources)
-	uv run ruff check $(sources)
+	uv run ruff format --check $(lint_paths)
+	uv run ruff check $(lint_paths)
 	uv run mypy $(sources)
 
 .PHONY: test ## Run tests and coverage reports

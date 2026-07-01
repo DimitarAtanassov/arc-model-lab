@@ -57,8 +57,15 @@ class ModelService:
             self._device = "cpu"
 
         try:
-            self._tokenizer = AutoTokenizer.from_pretrained(self._settings.tokenizer_id)
-            model = AutoModelForCausalLM.from_pretrained(self._settings.model_id, torch_dtype="auto")
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self._settings.tokenizer_id,
+                cache_dir=self._settings.model_cache_dir,
+            )
+            model = AutoModelForCausalLM.from_pretrained(
+                self._settings.model_id,
+                torch_dtype="auto",
+                cache_dir=self._settings.model_cache_dir,
+            )
         except Exception as exc:  # noqa: BLE001 - surface any load failure as a domain error
             raise ModelLoadError(f"Failed to load model '{self._settings.model_id}'") from exc
         model.to(self._device)

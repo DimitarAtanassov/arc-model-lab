@@ -28,13 +28,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     model_service.load()
 
     with session_factory() as session:
-        registered_model = ModelRepository(session).get_or_create(model_service.descriptor)
+        ModelRepository(session).get_or_create(model_service.descriptor)
         session.commit()
 
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.model_service = model_service
-    app.state.inference_service = InferenceService(model_service, registered_model)
+    app.state.inference_service = InferenceService(model_service)
 
     try:
         yield

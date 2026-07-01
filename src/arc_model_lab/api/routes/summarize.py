@@ -1,4 +1,4 @@
-"""HTTP routing layer. Thin by design: validate input, delegate, shape output."""
+"""The summarize endpoint: validate input, delegate to the service, shape output."""
 
 from __future__ import annotations
 
@@ -14,24 +14,14 @@ from arc_model_lab.services.inference_service import InferenceService
 SessionDep = Annotated[Session, Depends(get_session)]
 InferenceServiceDep = Annotated[InferenceService, Depends(get_inference_service)]
 
-router = APIRouter()
+router = APIRouter(tags=["inference"])
 
 
-@router.get("/health", tags=["ops"])
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@router.post(
-    "/summarize",
-    response_model=SummarizeResponse,
-    status_code=status.HTTP_201_CREATED,
-    tags=["inference"],
-)
+@router.post("/summarize", response_model=SummarizeResponse, status_code=status.HTTP_201_CREATED)
 def summarize(
     payload: SummarizeRequest,
     session: SessionDep,
     service: InferenceServiceDep,
 ) -> SummarizeResponse:
-    inference = service.summarize(session, payload.input_text)
+    inference = service.summarize(session, payload.input_text, payload.model_name)
     return SummarizeResponse.model_validate(inference)
