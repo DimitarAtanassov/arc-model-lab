@@ -9,7 +9,7 @@ from typing import Literal, TypedDict, cast
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
 
-from arc_model_lab.config import Settings
+from arc_model_lab.config import Device, Settings
 from arc_model_lab.domain import GenerationError, Model, ModelLoadError
 
 
@@ -38,12 +38,23 @@ class GenerationResult:
     latency_ms: int
 
 
-def _select_device() -> str:
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+def _select_device(preference: Device = "auto") -> str:
+    """Resolve the compute device. "auto" prefers CUDA, then MPS, then CPU.
+
+    An explicit accelerator that is unavailable is a configuration error rather than a
+    silent CPU fallback, so it surfaces as ``ModelLoadError``.
+    """
+    if preference == "auto":
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+    if preference == "cuda" and not torch.cuda.is_available():
+        raise ModelLoadError("Device 'cuda' requested but CUDA is not available")
+    if preference == "mps" and not torch.backends.mps.is_available():
+        raise ModelLoadError("Device 'mps' requested but MPS is not available")
+    return preference
 
 
 def _cache_key(model: Model) -> str:
@@ -87,7 +98,7 @@ class ModelService:
         except Exception as exc:  # noqa: BLE001 - surface any load failure as a domain error
             raise ModelLoadError(f"Failed to load model '{model.model_id}'") from exc
 
-        device = _select_device()
+        device = _select_device(self._settings.device)
         # transformers stubs mistype nn.Module.to/.eval on PreTrainedModel.
         runtime_model.to(device)  # type: ignore[arg-type]
         runtime_model.eval()  # type: ignore[no-untyped-call]

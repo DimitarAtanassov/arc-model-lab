@@ -99,17 +99,35 @@ def test_cache_key_defaults_when_revision_and_adapter_missing() -> None:
         (False, False, "cpu"),
     ],
 )
-def test_select_device(monkeypatch: pytest.MonkeyPatch, cuda: bool, mps: bool, expected: str) -> None:
+def test_select_device_auto(monkeypatch: pytest.MonkeyPatch, cuda: bool, mps: bool, expected: str) -> None:
     monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda)
     monkeypatch.setattr(torch.backends.mps, "is_available", lambda: mps)
 
-    assert _select_device() == expected
+    assert _select_device("auto") == expected
+
+
+def test_select_device_explicit_cpu_is_honored_without_accelerators(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+
+    assert _select_device("cpu") == "cpu"
+
+
+@pytest.mark.parametrize("preference", ["cuda", "mps"])
+def test_select_device_explicit_accelerator_unavailable_raises(
+    monkeypatch: pytest.MonkeyPatch, preference: str
+) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+
+    with pytest.raises(ModelLoadError):
+        _select_device(preference)  # type: ignore[arg-type]
 
 
 def test_load_caches_runtime_and_places_on_device(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(model_service_module, "AutoTokenizer", _FakeAutoTokenizer)
     monkeypatch.setattr(model_service_module, "AutoModelForCausalLM", _FakeAutoModel)
-    monkeypatch.setattr(model_service_module, "_select_device", lambda: "cpu")
+    monkeypatch.setattr(model_service_module, "_select_device", lambda _preference="auto": "cpu")
     service = _service()
     model = _model()
 

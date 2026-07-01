@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+Device = Literal["auto", "cpu", "mps", "cuda"]
 
 
 class Settings(BaseSettings):
@@ -26,6 +29,10 @@ class Settings(BaseSettings):
     model_cache_dir: str | None = None
     tokenizer_id: str = "google/flan-t5-base"
     adapter_path: str | None = None
+
+    # Compute device. "auto" prefers CUDA, then MPS, then CPU. Pin to "cpu" for models
+    # too large for the MPS 4 GiB per-tensor limit, which aborts the process otherwise.
+    device: Device = "cpu"
 
     # Generation parameters
     max_input_tokens: int = 1024

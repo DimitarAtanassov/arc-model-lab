@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
 
@@ -12,6 +14,8 @@ from arc_model_lab.domain import (
     ModelLoadError,
     ModelNotFoundError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _error(status_code: int, detail: str) -> JSONResponse:
@@ -31,10 +35,14 @@ async def _input_too_large(request: Request, exc: Exception) -> Response:
 
 
 async def _model_load_error(request: Request, exc: Exception) -> Response:
+    # Client gets a safe message; the real cause (download failure, OOM, bad
+    # cache dir, ...) is only recoverable from the server log.
+    logger.error("Model load failed", exc_info=exc)
     return _error(status.HTTP_503_SERVICE_UNAVAILABLE, "Model is temporarily unavailable")
 
 
 async def _generation_error(request: Request, exc: Exception) -> Response:
+    logger.error("Text generation failed", exc_info=exc)
     return _error(status.HTTP_500_INTERNAL_SERVER_ERROR, "Text generation failed")
 
 
