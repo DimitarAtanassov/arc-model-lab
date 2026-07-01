@@ -33,7 +33,7 @@ depends on nothing but the standard library and Pydantic.
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/)
-- Docker + Docker Compose (for Postgres)
+- Docker + Docker Compose
 
 ## Quickstart
 
@@ -42,7 +42,7 @@ depends on nothing but the standard library and Pydantic.
 cp .env.example .env
 
 # 2. Start Postgres
-docker compose up -d
+docker compose up -d postgres
 
 # 3. Install dependencies (creates .venv)
 uv sync
@@ -56,6 +56,15 @@ uv run arc-model-lab
 
 The API is then available at `http://localhost:8000` (interactive docs at
 `/docs`).
+
+### Run the whole stack in Docker
+
+```bash
+docker compose up --build    # requires a committed uv.lock
+```
+
+This builds the app image, waits for Postgres, applies migrations, and serves on
+`http://localhost:8000`. Model weights download once into the `hf_cache` volume.
 
 ### Example
 

@@ -1,0 +1,40 @@
+# Local stack. The app runs migrations then serves; Postgres persists to a volume.
+# Model weights download at runtime into the hf_cache volume (never baked into the image).
+services:
+  postgres:
+    image: postgres:16
+    container_name: arc-model-lab-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-arc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arc}
+      POSTGRES_DB: ${POSTGRES_DB:-arc_model_lab}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - arc_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arc} -d ${POSTGRES_DB:-arc_model_lab}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: arc-model-lab-api
+    restart: unless-stopped
+    command: ["sh", "-c", "alembic upgrade head && uvicorn arc_model_lab.main:app --host 0.0.0.0 --port 8000"]
+    environment:
+      ARC_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-arc}:${POSTGRES_PASSWORD:-arc}@postgres:5432/${POSTGRES_DB:-arc_model_lab}
+      HF_HOME: /var/cache/huggingface
+    ports:
+      - "${ARC_API_PORT:-8000}:8000"
+    volumes:
+      - hf_cache:/var/cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  arc_pgdata:
+  hf_cache:
