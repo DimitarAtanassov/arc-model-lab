@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from arc_model_lab.domain import (
     GenerationError,
     InputTooLargeError,
+    ModelInactiveError,
     ModelLoadError,
     ModelNotFoundError,
 )
@@ -19,6 +20,10 @@ def _error(status_code: int, detail: str) -> JSONResponse:
 
 async def _model_not_found(request: Request, exc: Exception) -> Response:
     return _error(status.HTTP_404_NOT_FOUND, str(exc) or "Model not found")
+
+
+async def _model_inactive(request: Request, exc: Exception) -> Response:
+    return _error(status.HTTP_409_CONFLICT, str(exc) or "Model is not active")
 
 
 async def _input_too_large(request: Request, exc: Exception) -> Response:
@@ -35,6 +40,7 @@ async def _generation_error(request: Request, exc: Exception) -> Response:
 
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ModelNotFoundError, _model_not_found)
+    app.add_exception_handler(ModelInactiveError, _model_inactive)
     app.add_exception_handler(InputTooLargeError, _input_too_large)
     app.add_exception_handler(ModelLoadError, _model_load_error)
     app.add_exception_handler(GenerationError, _generation_error)

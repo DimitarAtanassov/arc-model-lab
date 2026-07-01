@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from arc_model_lab.db.models import InferenceRecord, ModelRecord
-from arc_model_lab.domain import Inference, Model, Provider
+from arc_model_lab.domain import Inference, Model, ModelStatus, Provider
 
 
 class ModelRepository:
@@ -28,9 +28,30 @@ class ModelRepository:
         self._session.flush()
         return model
 
-    def get_or_create(self, model: Model) -> Model:
-        existing = self.get_by_name(model.name)
-        return existing if existing is not None else self.add(model)
+    def list_all(self) -> list[Model]:
+        records = self._session.scalars(select(ModelRecord).order_by(ModelRecord.name)).all()
+        return [_to_model(record) for record in records]
+
+    def upsert(self, model: Model) -> Model:
+        record = self._session.scalar(select(ModelRecord).where(ModelRecord.name == model.name))
+        if record is None:
+            return self.add(model)
+        record.provider = model.provider
+        record.model_id = model.model_id
+        record.tokenizer_id = model.tokenizer_id
+        record.revision = model.revision
+        record.adapter_path = model.adapter_path
+        record.status = model.status
+        self._session.flush()
+        return _to_model(record)
+
+    def set_status(self, name: str, status: ModelStatus) -> Model | None:
+        record = self._session.scalar(select(ModelRecord).where(ModelRecord.name == name))
+        if record is None:
+            return None
+        record.status = status
+        self._session.flush()
+        return _to_model(record)
 
 
 class InferenceRepository:
@@ -54,8 +75,11 @@ def _to_model(record: ModelRecord) -> Model:
         provider=Provider(record.provider),
         model_id=record.model_id,
         tokenizer_id=record.tokenizer_id,
+        revision=record.revision,
         adapter_path=record.adapter_path,
+        status=ModelStatus(record.status),
         created_at=record.created_at,
+        updated_at=record.updated_at,
     )
 
 
@@ -66,8 +90,11 @@ def _to_model_record(model: Model) -> ModelRecord:
         provider=model.provider,
         model_id=model.model_id,
         tokenizer_id=model.tokenizer_id,
+        revision=model.revision,
         adapter_path=model.adapter_path,
+        status=model.status,
         created_at=model.created_at,
+        updated_at=model.updated_at,
     )
 
 

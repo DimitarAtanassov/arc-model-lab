@@ -1,0 +1,20 @@
+[
+  {
+    "name": "qwen2.5-1.5b-instruct",
+    "provider": "huggingface",
+    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+    "tokenizer_id": "Qwen/Qwen2.5-1.5B-Instruct",
+    "revision": "main",
+    "adapter_path": null,
+    "status": "active"
+  },
+  {
+    "name": "gemma-3-1b-it",
+    "provider": "huggingface",
+    "model_id": "google/gemma-3-1b-it",
+    "tokenizer_id": "google/gemma-3-1b-it",
+    "revision": "main",
+    "adapter_path": null,
+    "status": "active"
+  }
+]

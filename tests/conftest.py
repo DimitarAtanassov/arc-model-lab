@@ -21,19 +21,19 @@ from arc_model_lab.config import Settings
 from arc_model_lab.db.base import Base, create_engine_from_url, create_session_factory
 from arc_model_lab.db.models import InferenceRecord, ModelRecord
 from arc_model_lab.db.repositories import ModelRepository
-from arc_model_lab.domain import GenerationError
+from arc_model_lab.domain import GenerationError, Model, Provider
 from arc_model_lab.main import create_app
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_service import ChatMessage, GenerationResult, ModelService
 
 
+_TEST_MODEL_NAME = "test-model"
+
+
 class FakeModelService(ModelService):
-    """Model-runtime double: loads nothing, returns deterministic output."""
+    """Model-runtime double: never loads weights, returns deterministic output."""
 
-    def load(self) -> None:
-        self._device = "cpu"
-
-    def generate(self, messages: list[ChatMessage]) -> GenerationResult:
+    def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
         return GenerationResult(
             prompt="fake-prompt",
             output_text="fake summary",
@@ -46,8 +46,17 @@ class FakeModelService(ModelService):
 class FailingModelService(FakeModelService):
     """Model-runtime double whose generation always fails."""
 
-    def generate(self, messages: list[ChatMessage]) -> GenerationResult:
+    def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
         raise GenerationError("boom")
+
+
+def _test_model() -> Model:
+    return Model(
+        name=_TEST_MODEL_NAME,
+        provider=Provider.HUGGINGFACE,
+        model_id="test/model",
+        tokenizer_id="test/model",
+    )
 
 
 def build_app(model_service: ModelService, session_factory: sessionmaker[Session]) -> FastAPI:
@@ -55,9 +64,11 @@ def build_app(model_service: ModelService, session_factory: sessionmaker[Session
     app = create_app()
     app.state.session_factory = session_factory
     with session_factory() as session:
-        ModelRepository(session).get_or_create(model_service.descriptor)
+        ModelRepository(session).upsert(_test_model())
         session.commit()
-    app.dependency_overrides[get_inference_service] = lambda: InferenceService(model_service)
+    app.dependency_overrides[get_inference_service] = lambda: InferenceService(
+        model_service, _TEST_MODEL_NAME
+    )
     return app
 
 

@@ -1,8 +1,9 @@
-from arc_model_lab.domain.enums import Provider
+from arc_model_lab.domain.enums import ModelStatus, Provider
 from arc_model_lab.domain.exceptions import (
     DomainError,
     GenerationError,
     InputTooLargeError,
+    ModelInactiveError,
     ModelLoadError,
     ModelNotFoundError,
 )
@@ -15,7 +16,9 @@ __all__ = [
     "Inference",
     "InputTooLargeError",
     "Model",
+    "ModelInactiveError",
     "ModelLoadError",
     "ModelNotFoundError",
+    "ModelStatus",
     "Provider",
 ]

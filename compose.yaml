@@ -23,7 +23,7 @@ services:
     build: .
     container_name: arc-model-lab-api
     restart: unless-stopped
-    command: ["sh", "-c", "alembic upgrade head && uvicorn arc_model_lab.main:app --host 0.0.0.0 --port 8000"]
+    command: ["sh", "-c", "alembic upgrade head && python -m arc_model_lab.db.seed_models seeds/models.local.json && uvicorn arc_model_lab.main:app --host 0.0.0.0 --port 8000"]
     environment:
       ARC_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-arc}:${POSTGRES_PASSWORD:-arc}@postgres:5432/${POSTGRES_DB:-arc_model_lab}
       HF_HOME: /var/cache/huggingface

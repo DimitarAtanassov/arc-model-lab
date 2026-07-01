@@ -50,7 +50,10 @@ uv sync
 # 4. Apply database migrations
 make migrate            # or: uv run alembic upgrade head
 
-# 5. Run the service (loads the model on startup, then serves)
+# 5. Seed the model catalog
+make model.seed
+
+# 6. Run the service (loads models lazily on first request)
 uv run arc-model-lab
 ```
 

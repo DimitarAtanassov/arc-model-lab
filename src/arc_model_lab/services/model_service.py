@@ -10,7 +10,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
 
 from arc_model_lab.config import Settings
-from arc_model_lab.domain import GenerationError, Model, ModelLoadError, Provider
+from arc_model_lab.domain import GenerationError, Model, ModelLoadError
 
 
 class ChatMessage(TypedDict):
@@ -18,6 +18,15 @@ class ChatMessage(TypedDict):
 
     role: Literal["system", "user", "assistant"]
     content: str
+
+
+@dataclass(slots=True, frozen=True)
+class RuntimeModel:
+    """A loaded runtime: tokenizer, weights, and the device they live on."""
+
+    tokenizer: PreTrainedTokenizerBase
+    model: PreTrainedModel
+    device: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -29,71 +38,78 @@ class GenerationResult:
     latency_ms: int
 
 
-class ModelService:
-    """Loads a causal LM once at startup and reuses it for every request.
+def _select_device() -> str:
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
-    ``descriptor`` is the domain metadata used to register the model in the database.
+
+def _cache_key(model: Model) -> str:
+    revision = model.revision or "default"
+    adapter = model.adapter_path or "no-adapter"
+    return f"{model.name}:{revision}:{adapter}"
+
+
+class ModelService:
+    """Loads catalog models on demand and caches each runtime in process.
+
+    Runtimes are keyed by ``name:revision:adapter`` so several models and revisions
+    coexist. Weights download lazily on first use.
     """
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._tokenizer: PreTrainedTokenizerBase | None = None
-        self._model: PreTrainedModel | None = None
-        self._device: str = "cpu"
-        self.descriptor = Model(
-            name=settings.model_name,
-            provider=Provider(settings.model_provider),
-            model_id=settings.model_id,
-            tokenizer_id=settings.tokenizer_id,
-            adapter_path=settings.adapter_path,
-        )
+        self._cache: dict[str, RuntimeModel] = {}
 
-    def load(self) -> None:
-        if torch.cuda.is_available():
-            self._device = "cuda"
-        elif torch.backends.mps.is_available():
-            self._device = "mps"
-        else:
-            self._device = "cpu"
+    def load(self, model: Model) -> RuntimeModel:
+        key = _cache_key(model)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
 
         try:
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                self._settings.tokenizer_id,
+            tokenizer = AutoTokenizer.from_pretrained(
+                model.tokenizer_id,
+                revision=model.revision,
                 cache_dir=self._settings.model_cache_dir,
             )
-            model = AutoModelForCausalLM.from_pretrained(
-                self._settings.model_id,
+            runtime_model = AutoModelForCausalLM.from_pretrained(
+                model.model_id,
+                revision=model.revision,
                 torch_dtype="auto",
                 cache_dir=self._settings.model_cache_dir,
             )
         except Exception as exc:  # noqa: BLE001 - surface any load failure as a domain error
-            raise ModelLoadError(f"Failed to load model '{self._settings.model_id}'") from exc
-        model.to(self._device)
-        model.eval()
-        self._model = model
+            raise ModelLoadError(f"Failed to load model '{model.model_id}'") from exc
 
-    def generate(self, messages: list[ChatMessage]) -> GenerationResult:
-        if self._model is None or self._tokenizer is None:
-            raise RuntimeError("Model is not loaded. Call load() before generate().")
+        device = _select_device()
+        runtime_model.to(device)
+        runtime_model.eval()
+        runtime = RuntimeModel(tokenizer=tokenizer, model=runtime_model, device=device)
+        self._cache[key] = runtime
+        return runtime
 
-        tokenizer = self._tokenizer
+    def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
+        runtime = self.load(model)
         try:
-            prompt: str = tokenizer.apply_chat_template(
+            prompt: str = runtime.tokenizer.apply_chat_template(
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
             )
-            inputs = tokenizer(
+            inputs = runtime.tokenizer(
                 prompt,
                 return_tensors="pt",
                 truncation=True,
                 max_length=self._settings.max_input_tokens,
-            ).to(self._device)
+            ).to(runtime.device)
             prompt_tokens = int(inputs["input_ids"].shape[1])
 
             start = time.perf_counter()
             with torch.no_grad():
-                output_ids = self._model.generate(
+                output_ids = runtime.model.generate(
                     **inputs,
                     max_new_tokens=self._settings.max_new_tokens,
                     num_beams=self._settings.num_beams,
@@ -103,7 +119,7 @@ class ModelService:
             # Causal LMs return prompt + completion; keep only the newly generated tail.
             completion_ids = output_ids[0][prompt_tokens:]
             completion_tokens = int(completion_ids.shape[0])
-            output_text = tokenizer.decode(completion_ids, skip_special_tokens=True)
+            output_text = runtime.tokenizer.decode(completion_ids, skip_special_tokens=True)
 
             return GenerationResult(
                 prompt=prompt,

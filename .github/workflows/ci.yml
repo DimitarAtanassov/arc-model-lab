@@ -63,6 +63,16 @@ jobs:
       - run: uv run alembic upgrade head
       - run: uv run alembic check
 
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run python -m arc_model_lab.db.seed_models --check seeds/models.local.json
+
   docker-build:
     runs-on: ubuntu-latest
     steps:

@@ -5,7 +5,13 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from arc_model_lab.db.repositories import InferenceRepository, ModelRepository
-from arc_model_lab.domain import Inference, InputTooLargeError, ModelNotFoundError
+from arc_model_lab.domain import (
+    Inference,
+    InputTooLargeError,
+    ModelInactiveError,
+    ModelNotFoundError,
+    ModelStatus,
+)
 from arc_model_lab.services.model_service import ChatMessage, ModelService
 
 # Reject oversized payloads before they reach the tokenizer.
@@ -28,13 +34,14 @@ def build_summary_messages(input_text: str) -> list[ChatMessage]:
 class InferenceService:
     """Coordinates a single summarization request end to end.
 
-    The model is resolved per request from the catalog by name; unknown names
-    raise ``ModelNotFoundError``. The commit happens here so a row is guaranteed
-    persisted before any success response is returned.
+    The model is resolved per request from the catalog by name. Unknown names
+    raise ``ModelNotFoundError``; non-active models raise ``ModelInactiveError``.
+    The commit happens here so a row is persisted before any success response.
     """
 
-    def __init__(self, model_service: ModelService) -> None:
+    def __init__(self, model_service: ModelService, default_model_name: str) -> None:
         self._model_service = model_service
+        self._default_model_name = default_model_name
 
     def summarize(
         self, session: Session, input_text: str, model_name: str | None = None
@@ -42,13 +49,15 @@ class InferenceService:
         if len(input_text) > _MAX_INPUT_CHARS:
             raise InputTooLargeError(f"Input exceeds {_MAX_INPUT_CHARS} characters")
 
-        name = model_name or self._model_service.descriptor.name
+        name = model_name or self._default_model_name
         model = ModelRepository(session).get_by_name(name)
         if model is None:
             raise ModelNotFoundError(f"Model not found: {name}")
+        if model.status != ModelStatus.ACTIVE:
+            raise ModelInactiveError(f"Model is not active: {name}")
 
         messages = build_summary_messages(input_text)
-        result = self._model_service.generate(messages)
+        result = self._model_service.generate(model, messages)
 
         inference = Inference(
             model_id=model.id,

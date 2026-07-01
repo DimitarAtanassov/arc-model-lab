@@ -9,7 +9,7 @@ lint_paths := src tests
 
 .PHONY: help ## Show this help
 help:
-	@grep -E '^\.PHONY: [a-zA-Z0-9_-]+ ##' $(MAKEFILE_LIST) | sed -E 's/^\.PHONY: ([a-zA-Z0-9_-]+) ## (.*)/\1|\2/' | awk -F'|' '{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^\.PHONY: [a-zA-Z0-9._-]+ ##' $(MAKEFILE_LIST) | sed -E 's/^\.PHONY: ([a-zA-Z0-9._-]+) ## (.*)/\1|\2/' | awk -F'|' '{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: prepare ## Sync the virtualenv with all dependency groups
 prepare:
@@ -47,3 +47,35 @@ downgrade: prepare
 .PHONY: run ## Run the app locally with auto-reload
 run: prepare
 	uv run uvicorn $(APP).main:app --reload --reload-dir src --host 0.0.0.0 --port 8000
+
+.PHONY: model.seed ## Seed the model catalog from seeds/models.local.json
+model.seed: prepare
+	uv run python -m arc_model_lab.db.seed_models seeds/models.local.json
+
+.PHONY: model.validate ## Validate the seed file without touching the database
+model.validate: prepare
+	uv run python -m arc_model_lab.db.seed_models --check seeds/models.local.json
+
+.PHONY: model.list ## List catalog models
+model.list: prepare
+	uv run python -m arc_model_lab.cli.models list
+
+.PHONY: model.get ## Show one model (NAME=...)
+model.get: prepare
+	uv run python -m arc_model_lab.cli.models get --name $(NAME)
+
+.PHONY: model.activate ## Activate a model (NAME=...)
+model.activate: prepare
+	uv run python -m arc_model_lab.cli.models activate --name $(NAME)
+
+.PHONY: model.deactivate ## Deactivate a model (NAME=...)
+model.deactivate: prepare
+	uv run python -m arc_model_lab.cli.models deactivate --name $(NAME)
+
+.PHONY: model.smoke ## Load a model and run a summary (NAME=...)
+model.smoke: prepare
+	uv run python -m arc_model_lab.cli.models smoke --name $(NAME)
+
+.PHONY: model.clear-cache ## Remove the local HuggingFace cache
+model.clear-cache:
+	rm -rf .cache/huggingface

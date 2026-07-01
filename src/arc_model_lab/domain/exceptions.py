@@ -11,6 +11,10 @@ class ModelNotFoundError(DomainError):
     """The requested model is not registered in the catalog."""
 
 
+class ModelInactiveError(DomainError):
+    """The requested model exists but is not available for inference."""
+
+
 class ModelLoadError(DomainError):
     """A model's weights or tokenizer could not be loaded."""
 
