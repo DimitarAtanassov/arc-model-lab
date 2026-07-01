@@ -47,7 +47,10 @@ docker compose up -d
 # 3. Install dependencies (creates .venv)
 uv sync
 
-# 4. Run the service (loads the model on startup, then serves)
+# 4. Apply database migrations
+make migrate            # or: uv run alembic upgrade head
+
+# 5. Run the service (loads the model on startup, then serves)
 uv run arc-model-lab
 ```
 
@@ -63,7 +66,7 @@ curl -s http://localhost:8000/summarize \
 ```
 
 Each call returns the persisted inference (including `id`, token counts, and
-`latency_ms`) and writes one row to the `inferences` table.
+`latency_ms`) and writes one row to the `inference` table.
 
 ## Configuration
 
@@ -104,6 +107,6 @@ uv run mypy src
   blocked. No async database or task queue is introduced.
 - **Repositories return domain objects.** ORM types never escape `db/`, so the
   rest of the app is free of SQLAlchemy session/detach concerns.
-- **Schema management.** Tables are created on startup via
-  `Base.metadata.create_all`. Alembic can be layered in later without touching
-  the domain or service layers.
+- **Schema management.** The schema is owned by Alembic migrations in
+  `migrations/`; apply them with `make migrate` before starting the app. A
+  metadata naming convention keeps constraint names stable across autogenerate.

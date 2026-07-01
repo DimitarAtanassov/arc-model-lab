@@ -17,10 +17,18 @@ wheels/
 .ruff_cache/
 .pytest_cache/
 
-# Model / HuggingFace caches
+# Model artifacts & HuggingFace caches (never commit weights or tokenizer files)
 .cache/
+.huggingface/
+/artifacts/
+/models/
+*.safetensors
+*.bin
+*.gguf
 
 # Editor / OS
 .DS_Store
 .idea/
 .vscode/
+
+todo.md

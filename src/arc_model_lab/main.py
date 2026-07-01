@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from arc_model_lab.api.routes import router
 from arc_model_lab.config import Settings, get_settings
-from arc_model_lab.db.base import Base, create_engine_from_url, create_session_factory
+from arc_model_lab.db.base import create_engine_from_url, create_session_factory
 from arc_model_lab.db.repositories import ModelRepository
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_service import ModelService
@@ -21,7 +21,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
 
     engine = create_engine_from_url(settings.database_url, echo=settings.db_echo)
-    Base.metadata.create_all(engine)
     session_factory = create_session_factory(engine)
 
     model_service = ModelService(settings)
