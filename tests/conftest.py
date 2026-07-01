@@ -26,7 +26,6 @@ from arc_model_lab.main import create_app
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_service import ChatMessage, GenerationResult, ModelService
 
-
 _TEST_MODEL_NAME = "test-model"
 
 
@@ -66,9 +65,7 @@ def build_app(model_service: ModelService, session_factory: sessionmaker[Session
     with session_factory() as session:
         ModelRepository(session).upsert(_test_model())
         session.commit()
-    app.dependency_overrides[get_inference_service] = lambda: InferenceService(
-        model_service, _TEST_MODEL_NAME
-    )
+    app.dependency_overrides[get_inference_service] = lambda: InferenceService(model_service, _TEST_MODEL_NAME)
     return app
 
 
@@ -103,15 +100,22 @@ def session_factory(engine: Engine) -> sessionmaker[Session]:
 
 @pytest.fixture(autouse=True)
 def _isolate_db(request: pytest.FixtureRequest) -> Iterator[None]:
-    """Truncate tables after any test that touched the database."""
-    yield
-    if "session_factory" not in request.fixturenames:
-        return
-    factory: sessionmaker[Session] = request.getfixturevalue("session_factory")
-    with factory() as session:
-        session.execute(delete(InferenceRecord))
-        session.execute(delete(ModelRecord))
-        session.commit()
+    """Truncate tables before any test that touches the database.
+
+    Cleaning at setup (rather than teardown) avoids a fixture-finalization
+    ordering bug: this autouse fixture is set up before ``session_factory`` and
+    therefore torn down after it, so ``session_factory`` is no longer resolvable
+    from a post-yield finalizer. Because this fixture is autouse it still runs
+    before the ``client`` fixture seeds the test model, so each DB test starts
+    from a clean slate.
+    """
+    if "session_factory" in request.fixturenames:
+        factory: sessionmaker[Session] = request.getfixturevalue("session_factory")
+        with factory() as session:
+            session.execute(delete(InferenceRecord))
+            session.execute(delete(ModelRecord))
+            session.commit()
+    return
 
 
 @pytest.fixture

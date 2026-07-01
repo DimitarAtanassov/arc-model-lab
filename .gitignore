@@ -39,3 +39,6 @@ AGENTS.md
 .github/instructions/
 .github/prompts/
 .github/skills/
+
+# test coverage artifacts
+.coverage

@@ -1,8 +1,8 @@
 """Model catalog CLI: list, get, activate, deactivate, smoke.
 
-    python -m arc_model_lab.cli.models list
-    python -m arc_model_lab.cli.models get --name qwen2.5-1.5b-instruct
-    python -m arc_model_lab.cli.models smoke --name qwen2.5-1.5b-instruct
+python -m arc_model_lab.cli.models list
+python -m arc_model_lab.cli.models get --name qwen2.5-1.5b-instruct
+python -m arc_model_lab.cli.models smoke --name qwen2.5-1.5b-instruct
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
@@ -75,18 +75,22 @@ class ModelService:
                 revision=model.revision,
                 cache_dir=self._settings.model_cache_dir,
             )
-            runtime_model = AutoModelForCausalLM.from_pretrained(
-                model.model_id,
-                revision=model.revision,
-                torch_dtype="auto",
-                cache_dir=self._settings.model_cache_dir,
+            runtime_model = cast(
+                PreTrainedModel,
+                AutoModelForCausalLM.from_pretrained(
+                    model.model_id,
+                    revision=model.revision,
+                    torch_dtype="auto",
+                    cache_dir=self._settings.model_cache_dir,
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - surface any load failure as a domain error
             raise ModelLoadError(f"Failed to load model '{model.model_id}'") from exc
 
         device = _select_device()
-        runtime_model.to(device)
-        runtime_model.eval()
+        # transformers stubs mistype nn.Module.to/.eval on PreTrainedModel.
+        runtime_model.to(device)  # type: ignore[arg-type]
+        runtime_model.eval()  # type: ignore[no-untyped-call]
         runtime = RuntimeModel(tokenizer=tokenizer, model=runtime_model, device=device)
         self._cache[key] = runtime
         return runtime
@@ -94,10 +98,13 @@ class ModelService:
     def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
         runtime = self.load(model)
         try:
-            prompt: str = runtime.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
+            prompt = cast(
+                str,
+                runtime.tokenizer.apply_chat_template(
+                    cast("list[dict[str, str]]", messages),
+                    tokenize=False,
+                    add_generation_prompt=True,
+                ),
             )
             inputs = runtime.tokenizer(
                 prompt,
@@ -109,7 +116,7 @@ class ModelService:
 
             start = time.perf_counter()
             with torch.no_grad():
-                output_ids = runtime.model.generate(
+                output_ids = runtime.model.generate(  # type: ignore[operator]
                     **inputs,
                     max_new_tokens=self._settings.max_new_tokens,
                     num_beams=self._settings.num_beams,
@@ -119,7 +126,7 @@ class ModelService:
             # Causal LMs return prompt + completion; keep only the newly generated tail.
             completion_ids = output_ids[0][prompt_tokens:]
             completion_tokens = int(completion_ids.shape[0])
-            output_text = runtime.tokenizer.decode(completion_ids, skip_special_tokens=True)
+            output_text = cast(str, runtime.tokenizer.decode(completion_ids, skip_special_tokens=True))
 
             return GenerationResult(
                 prompt=prompt,

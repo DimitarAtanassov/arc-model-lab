@@ -18,8 +18,7 @@ from arc_model_lab.services.model_service import ChatMessage, ModelService
 _MAX_INPUT_CHARS = 50_000
 
 _SUMMARY_SYSTEM_PROMPT = (
-    "You are a precise assistant that writes clear, concise summaries. "
-    "Capture the key points and leave out filler."
+    "You are a precise assistant that writes clear, concise summaries. Capture the key points and leave out filler."
 )
 _SUMMARY_INSTRUCTION = "Summarize the following text:\n\n{text}"
 
@@ -43,9 +42,7 @@ class InferenceService:
         self._model_service = model_service
         self._default_model_name = default_model_name
 
-    def summarize(
-        self, session: Session, input_text: str, model_name: str | None = None
-    ) -> Inference:
+    def summarize(self, session: Session, input_text: str, model_name: str | None = None) -> Inference:
         if len(input_text) > _MAX_INPUT_CHARS:
             raise InputTooLargeError(f"Input exceeds {_MAX_INPUT_CHARS} characters")
 

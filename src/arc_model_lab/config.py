@@ -26,16 +26,16 @@ class Settings(BaseSettings):
     model_cache_dir: str | None = None
     tokenizer_id: str = "google/flan-t5-base"
     adapter_path: str | None = None
-    
+
     # Generation parameters
     max_input_tokens: int = 1024
     max_new_tokens: int = 256
     num_beams: int = 4
 
     # HTTP server
-    api_host: str = "0.0.0.0"
+    api_host: str = "0.0.0.0"  # noqa: S104 — bind all interfaces for containerized serving
     api_port: int = 8000
-    
+
     # App metadata
     app_name: str = "arc-model-lab"
     environment: str = "local"

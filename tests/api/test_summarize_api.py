@@ -37,9 +37,7 @@ def test_generation_failure_returns_500(failing_client: TestClient) -> None:
     assert response.status_code == 500
 
 
-def test_inactive_model_returns_409(
-    client: TestClient, session_factory: sessionmaker[Session]
-) -> None:
+def test_inactive_model_returns_409(client: TestClient, session_factory: sessionmaker[Session]) -> None:
     with session_factory() as session:
         ModelRepository(session).upsert(
             Model(
