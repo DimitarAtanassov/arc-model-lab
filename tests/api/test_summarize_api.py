@@ -37,6 +37,11 @@ def test_generation_failure_returns_500(failing_client: TestClient) -> None:
     assert response.status_code == 500
 
 
+def test_model_load_failure_returns_503(model_load_failing_client: TestClient) -> None:
+    response = model_load_failing_client.post("/summarize", json={"input_text": "hi"})
+    assert response.status_code == 503
+
+
 def test_inactive_model_returns_409(client: TestClient, session_factory: sessionmaker[Session]) -> None:
     with session_factory() as session:
         ModelRepository(session).upsert(

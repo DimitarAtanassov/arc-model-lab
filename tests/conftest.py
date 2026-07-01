@@ -21,7 +21,7 @@ from arc_model_lab.config import Settings
 from arc_model_lab.db.base import Base, create_engine_from_url, create_session_factory
 from arc_model_lab.db.models import InferenceRecord, ModelRecord
 from arc_model_lab.db.repositories import ModelRepository
-from arc_model_lab.domain import GenerationError, Model, Provider
+from arc_model_lab.domain import GenerationError, Model, ModelLoadError, Provider
 from arc_model_lab.main import create_app
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_service import ChatMessage, GenerationResult, ModelService
@@ -47,6 +47,13 @@ class FailingModelService(FakeModelService):
 
     def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
         raise GenerationError("boom")
+
+
+class ModelLoadFailingModelService(FakeModelService):
+    """Model-runtime double whose weights never load (maps to HTTP 503)."""
+
+    def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
+        raise ModelLoadError("model temporarily unavailable")
 
 
 def _test_model() -> Model:
@@ -132,3 +139,8 @@ def client(fake_model_service: FakeModelService, session_factory: sessionmaker[S
 @pytest.fixture
 def failing_client(settings: Settings, session_factory: sessionmaker[Session]) -> TestClient:
     return TestClient(build_app(FailingModelService(settings), session_factory))
+
+
+@pytest.fixture
+def model_load_failing_client(settings: Settings, session_factory: sessionmaker[Session]) -> TestClient:
+    return TestClient(build_app(ModelLoadFailingModelService(settings), session_factory))

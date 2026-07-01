@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> None:
         _set_status(args.name, ModelStatus.ACTIVE)
     elif args.command == "deactivate":
         _set_status(args.name, ModelStatus.INACTIVE)
-    elif args.command == "smoke":
+    elif args.command == "smoke":  # pragma: no branch - argparse restricts command to this exhaustive set
         _smoke(args.name)
 
 
