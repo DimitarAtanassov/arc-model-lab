@@ -32,3 +32,10 @@ wheels/
 .vscode/
 
 todo.md
+
+copilot-instructions.md
+AGENTS.md
+.github/agents/
+.github/instructions/
+.github/prompts/
+.github/skills/

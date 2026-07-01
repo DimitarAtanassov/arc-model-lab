@@ -10,7 +10,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
 
 from arc_model_lab.config import Settings
-from arc_model_lab.domain.models import Model
+from arc_model_lab.domain import GenerationError, Model, ModelLoadError, Provider
 
 
 class ChatMessage(TypedDict):
@@ -42,7 +42,7 @@ class ModelService:
         self._device: str = "cpu"
         self.descriptor = Model(
             name=settings.model_name,
-            provider=settings.model_provider,
+            provider=Provider(settings.model_provider),
             model_id=settings.model_id,
             tokenizer_id=settings.tokenizer_id,
             adapter_path=settings.adapter_path,
@@ -56,8 +56,11 @@ class ModelService:
         else:
             self._device = "cpu"
 
-        self._tokenizer = AutoTokenizer.from_pretrained(self._settings.tokenizer_id)
-        model = AutoModelForCausalLM.from_pretrained(self._settings.model_id, torch_dtype="auto")
+        try:
+            self._tokenizer = AutoTokenizer.from_pretrained(self._settings.tokenizer_id)
+            model = AutoModelForCausalLM.from_pretrained(self._settings.model_id, torch_dtype="auto")
+        except Exception as exc:  # noqa: BLE001 - surface any load failure as a domain error
+            raise ModelLoadError(f"Failed to load model '{self._settings.model_id}'") from exc
         model.to(self._device)
         model.eval()
         self._model = model
@@ -67,37 +70,40 @@ class ModelService:
             raise RuntimeError("Model is not loaded. Call load() before generate().")
 
         tokenizer = self._tokenizer
-        prompt: str = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        inputs = tokenizer(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=self._settings.max_input_tokens,
-        ).to(self._device)
-        prompt_tokens = int(inputs["input_ids"].shape[1])
-
-        start = time.perf_counter()
-        with torch.no_grad():
-            output_ids = self._model.generate(
-                **inputs,
-                max_new_tokens=self._settings.max_new_tokens,
-                num_beams=self._settings.num_beams,
+        try:
+            prompt: str = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
             )
-        latency_ms = int((time.perf_counter() - start) * 1000)
+            inputs = tokenizer(
+                prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self._settings.max_input_tokens,
+            ).to(self._device)
+            prompt_tokens = int(inputs["input_ids"].shape[1])
 
-        # Causal LMs return prompt + completion; keep only the newly generated tail.
-        completion_ids = output_ids[0][prompt_tokens:]
-        completion_tokens = int(completion_ids.shape[0])
-        output_text = tokenizer.decode(completion_ids, skip_special_tokens=True)
+            start = time.perf_counter()
+            with torch.no_grad():
+                output_ids = self._model.generate(
+                    **inputs,
+                    max_new_tokens=self._settings.max_new_tokens,
+                    num_beams=self._settings.num_beams,
+                )
+            latency_ms = int((time.perf_counter() - start) * 1000)
 
-        return GenerationResult(
-            prompt=prompt,
-            output_text=output_text.strip(),
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            latency_ms=latency_ms,
-        )
+            # Causal LMs return prompt + completion; keep only the newly generated tail.
+            completion_ids = output_ids[0][prompt_tokens:]
+            completion_tokens = int(completion_ids.shape[0])
+            output_text = tokenizer.decode(completion_ids, skip_special_tokens=True)
+
+            return GenerationResult(
+                prompt=prompt,
+                output_text=output_text.strip(),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                latency_ms=latency_ms,
+            )
+        except Exception as exc:  # noqa: BLE001 - surface any runtime failure as a domain error
+            raise GenerationError("Text generation failed") from exc

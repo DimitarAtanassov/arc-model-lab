@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from arc_model_lab.db.models import InferenceRecord, ModelRecord
-from arc_model_lab.domain.models import Inference, Model
+from arc_model_lab.domain import Inference, Model, Provider
 
 
 class ModelRepository:
@@ -51,7 +51,7 @@ def _to_model(record: ModelRecord) -> Model:
     return Model(
         id=record.id,
         name=record.name,
-        provider=record.provider,
+        provider=Provider(record.provider),
         model_id=record.model_id,
         tokenizer_id=record.tokenizer_id,
         adapter_path=record.adapter_path,

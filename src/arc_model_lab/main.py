@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
+from arc_model_lab.api.errors import register_exception_handlers
 from arc_model_lab.api.routes import router
 from arc_model_lab.config import Settings, get_settings
 from arc_model_lab.db.base import create_engine_from_url, create_session_factory
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="arc-model-lab", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or get_settings()
+    register_exception_handlers(app)
     app.include_router(router)
     return app
 

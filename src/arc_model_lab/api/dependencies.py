@@ -11,16 +11,14 @@ from arc_model_lab.services.inference_service import InferenceService
 
 
 def get_session(request: Request) -> Iterator[Session]:
-    """Yield a request-scoped session, committing on success.
+    """Yield a request-scoped session; the ``with`` block rolls back on error.
 
-    If the handler raises, the surrounding ``with`` block closes the session,
-    which discards (rolls back) the uncommitted transaction before the exception
-    propagates.
+    The service layer owns the commit, so a row is guaranteed to be persisted
+    before any success response is returned.
     """
     session_factory: sessionmaker[Session] = request.app.state.session_factory
     with session_factory() as session:
         yield session
-        session.commit()
 
 
 def get_inference_service(request: Request) -> InferenceService:
