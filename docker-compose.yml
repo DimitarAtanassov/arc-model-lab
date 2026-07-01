@@ -1,0 +1,23 @@
+# Postgres for local development.
+# The app itself runs on the host (via `uv run`); only the database is containerized.
+services:
+  postgres:
+    image: postgres:16
+    container_name: arc-model-lab-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-arc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arc}
+      POSTGRES_DB: ${POSTGRES_DB:-arc_model_lab}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - arc_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arc} -d ${POSTGRES_DB:-arc_model_lab}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  arc_pgdata:

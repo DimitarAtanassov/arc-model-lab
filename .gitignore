@@ -8,3 +8,19 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Environment files
+.env
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Model / HuggingFace caches
+.cache/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
