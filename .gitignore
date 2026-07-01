@@ -8,3 +8,37 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Environment files
+.env
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Model artifacts & HuggingFace caches (never commit weights or tokenizer files)
+.cache/
+.huggingface/
+/artifacts/
+/models/
+*.safetensors
+*.bin
+*.gguf
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+todo.md
+
+copilot-instructions.md
+AGENTS.md
+.github/agents/
+.github/instructions/
+.github/prompts/
+.github/skills/
+
+# test coverage artifacts
+.coverage
