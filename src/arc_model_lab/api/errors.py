@@ -31,7 +31,7 @@ async def _model_inactive(request: Request, exc: Exception) -> Response:
 
 
 async def _input_too_large(request: Request, exc: Exception) -> Response:
-    return _error(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, str(exc) or "Input too large")
+    return _error(status.HTTP_413_CONTENT_TOO_LARGE, str(exc) or "Input too large")
 
 
 async def _model_load_error(request: Request, exc: Exception) -> Response:

@@ -9,7 +9,13 @@ import httpx
 import pytest
 
 from arc_model_lab.domain import EvaluationError
-from arc_model_lab.services.arc_eval_client import ArcEvalClient, EvalMetadata, EvalRequest
+from arc_model_lab.services.arc_eval_client import (
+    ArcEvalClient,
+    EvalMetadata,
+    EvalRequest,
+    EvalSettings,
+    build_arc_eval_client,
+)
 
 _VALID_BODY = {
     "results": [
@@ -93,3 +99,28 @@ def test_evaluate_raises_on_unexpected_schema() -> None:
 
     with pytest.raises(EvaluationError):
         _client(handler).evaluate(_request())
+
+
+def test_build_arc_eval_client_returns_none_without_service_url() -> None:
+    assert build_arc_eval_client(EvalSettings(service_url="")) is None
+
+
+def test_build_arc_eval_client_creates_client_when_configured() -> None:
+    client = build_arc_eval_client(EvalSettings(service_url="http://eval.test", timeout_seconds=12.5))
+
+    assert client is not None
+    assert client._http.base_url == httpx.URL("http://eval.test")
+    assert client._http.timeout.connect == 12.5
+    assert client._http.timeout.read == 12.5
+    assert client._http.timeout.write == 12.5
+    assert client._http.timeout.pool == 12.5
+
+    client.close()
+
+
+def test_close_closes_underlying_http_client() -> None:
+    client = ArcEvalClient(
+        httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=_VALID_BODY)))
+    )
+
+    client.close()

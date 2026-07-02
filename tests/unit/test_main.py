@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
@@ -41,3 +43,36 @@ def test_run_invokes_uvicorn_with_configured_host_and_port(monkeypatch: pytest.M
 
     settings = get_settings()
     assert captured == {"target": "arc_model_lab.main:app", "host": settings.api_host, "port": settings.api_port}
+
+
+def test_lifespan_closes_eval_client_and_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    closed = False
+    disposed = False
+
+    class _DummyEvalClient:
+        def close(self) -> None:
+            nonlocal closed
+            closed = True
+
+    class _DummyEngine:
+        def dispose(self) -> None:
+            nonlocal disposed
+            disposed = True
+
+    monkeypatch.setattr(main_module, "create_engine_from_url", lambda *args, **kwargs: _DummyEngine())
+    monkeypatch.setattr(main_module, "create_session_factory", lambda engine: object())
+    monkeypatch.setattr(main_module, "ModelService", lambda settings: object())
+    monkeypatch.setattr(main_module, "build_arc_eval_client", lambda settings: _DummyEvalClient())
+    monkeypatch.setattr(main_module, "InferenceService", lambda model_service, model_name: object())
+    monkeypatch.setattr(main_module, "EvaluationService", lambda eval_client: object())
+
+    app = create_app(Settings(database_url="postgresql://example/test"))
+
+    async def _exercise() -> None:
+        async with main_module.lifespan(app):
+            pass
+
+    asyncio.run(_exercise())
+
+    assert closed is True
+    assert disposed is True
