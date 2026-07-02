@@ -10,8 +10,10 @@ from fastapi import FastAPI
 
 from arc_model_lab.api.errors import register_exception_handlers
 from arc_model_lab.api.routes import router
+from arc_model_lab.clients.arc_eval_client import EvalSettings, build_arc_eval_client
 from arc_model_lab.config import Settings, get_settings
 from arc_model_lab.db.base import create_engine_from_url, create_session_factory
+from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_service import ModelService
 
@@ -23,15 +25,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     engine = create_engine_from_url(settings.database_url, echo=settings.db_echo)
     session_factory = create_session_factory(engine)
     model_service = ModelService(settings)
+    eval_client = build_arc_eval_client(EvalSettings())
 
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.model_service = model_service
     app.state.inference_service = InferenceService(model_service, settings.model_name)
+    app.state.evaluation_service = EvaluationService(eval_client)
 
     try:
         yield
     finally:
+        if eval_client is not None:
+            eval_client.close()
         engine.dispose()
 
 

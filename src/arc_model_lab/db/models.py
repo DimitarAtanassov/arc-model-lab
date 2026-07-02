@@ -5,7 +5,18 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Double,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from arc_model_lab.db.base import Base
@@ -46,3 +57,32 @@ class InferenceRecord(Base):
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EvaluationResultRecord(Base):
+    """One metric score for one inference, produced by the arc-eval service.
+
+    One metric per row (not a JSON blob) so scores stay queryable and indexable.
+    The unique key ``(inference_id, metric_name, evaluator_name)`` makes replay
+    and backfill idempotent: re-evaluating an inference upserts rather than
+    duplicating.
+    """
+
+    __tablename__ = "evaluation_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "inference_id",
+            "metric_name",
+            "evaluator_name",
+            name="uq_evaluation_results_inference_metric_evaluator",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)  # noqa: A003 - primary key
+    inference_id: Mapped[UUID] = mapped_column(ForeignKey("inference.id", ondelete="CASCADE"), index=True)
+    metric_name: Mapped[str] = mapped_column(Text, index=True)
+    score: Mapped[float] = mapped_column(Double)
+    reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evaluator_name: Mapped[str] = mapped_column(Text)
+    evaluator_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

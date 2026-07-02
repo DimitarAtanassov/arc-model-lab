@@ -79,6 +79,7 @@ dependencies = [
     { name = "accelerate" },
     { name = "alembic" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -95,7 +96,6 @@ lint = [
 ]
 test = [
     { name = "coverage" },
-    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "testcontainers" },
@@ -106,6 +106,7 @@ requires-dist = [
     { name = "accelerate", specifier = ">=1.0" },
     { name = "alembic", specifier = ">=1.13" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
@@ -122,7 +123,6 @@ lint = [
 ]
 test = [
     { name = "coverage", specifier = ">=7.6" },
-    { name = "httpx", specifier = ">=0.27" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "testcontainers", extras = ["postgres"], specifier = ">=4.8" },

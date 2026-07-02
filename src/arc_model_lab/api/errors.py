@@ -13,6 +13,7 @@ from arc_model_lab.domain import (
     ModelInactiveError,
     ModelLoadError,
     ModelNotFoundError,
+    UnknownMetricError,
 )
 
 logger = logging.getLogger(__name__)
@@ -26,12 +27,16 @@ async def _model_not_found(request: Request, exc: Exception) -> Response:
     return _error(status.HTTP_404_NOT_FOUND, str(exc) or "Model not found")
 
 
+async def _unknown_metric(request: Request, exc: Exception) -> Response:
+    return _error(status.HTTP_404_NOT_FOUND, str(exc) or "Requested metric does not exist")
+
+
 async def _model_inactive(request: Request, exc: Exception) -> Response:
     return _error(status.HTTP_409_CONFLICT, str(exc) or "Model is not active")
 
 
 async def _input_too_large(request: Request, exc: Exception) -> Response:
-    return _error(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, str(exc) or "Input too large")
+    return _error(status.HTTP_413_CONTENT_TOO_LARGE, str(exc) or "Input too large")
 
 
 async def _model_load_error(request: Request, exc: Exception) -> Response:
@@ -52,3 +57,4 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(InputTooLargeError, _input_too_large)
     app.add_exception_handler(ModelLoadError, _model_load_error)
     app.add_exception_handler(GenerationError, _generation_error)
+    app.add_exception_handler(UnknownMetricError, _unknown_metric)

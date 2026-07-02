@@ -6,13 +6,15 @@ this boundary. Transaction control (commit/rollback) is owned by the caller.
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from arc_model_lab.db.models import InferenceRecord, ModelRecord
-from arc_model_lab.domain import Inference, Model, ModelStatus, Provider
+from arc_model_lab.db.models import EvaluationResultRecord, InferenceRecord, ModelRecord
+from arc_model_lab.domain import EvaluationResult, Inference, Model, ModelStatus, Provider
 
 
 class ModelRepository:
@@ -66,6 +68,66 @@ class InferenceRepository:
     def get(self, inference_id: UUID) -> Inference | None:
         record = self._session.get(InferenceRecord, inference_id)
         return _to_inference(record) if record is not None else None
+
+    def list_unevaluated(
+        self,
+        *,
+        limit: int,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+    ) -> list[Inference]:
+        """Return inferences that have no evaluation results yet, oldest first.
+
+        Used by replay/backfill. The optional half-open ``[created_after,
+        created_before)`` window scopes a backfill to a time range.
+        """
+        unevaluated = ~exists().where(EvaluationResultRecord.inference_id == InferenceRecord.id)
+        stmt = select(InferenceRecord).where(unevaluated)
+        if created_after is not None:
+            stmt = stmt.where(InferenceRecord.created_at >= created_after)
+        if created_before is not None:
+            stmt = stmt.where(InferenceRecord.created_at < created_before)
+        stmt = stmt.order_by(InferenceRecord.created_at).limit(limit)
+        records = self._session.scalars(stmt).all()
+        return [_to_inference(record) for record in records]
+
+
+class EvaluationResultRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def upsert_many(self, results: list[EvaluationResult]) -> list[EvaluationResult]:
+        """Insert results, refreshing score/reasoning on the unique key.
+
+        The unique key ``(inference_id, metric_name, evaluator_name)`` makes this
+        idempotent: replaying an already-scored inference updates the score in
+        place instead of raising or duplicating. ``created_at`` is preserved as
+        the first-evaluated time.
+        """
+        if not results:
+            return []
+        insert_stmt = pg_insert(EvaluationResultRecord).values(
+            [_evaluation_result_values(result) for result in results]
+        )
+        upsert_stmt = insert_stmt.on_conflict_do_update(
+            constraint="uq_evaluation_results_inference_metric_evaluator",
+            set_={
+                "score": insert_stmt.excluded.score,
+                "reasoning": insert_stmt.excluded.reasoning,
+                "evaluator_version": insert_stmt.excluded.evaluator_version,
+            },
+        )
+        self._session.execute(upsert_stmt)
+        self._session.flush()
+        return results
+
+    def list_for_inference(self, inference_id: UUID) -> list[EvaluationResult]:
+        records = self._session.scalars(
+            select(EvaluationResultRecord)
+            .where(EvaluationResultRecord.inference_id == inference_id)
+            .order_by(EvaluationResultRecord.metric_name)
+        ).all()
+        return [_to_evaluation_result(record) for record in records]
 
 
 def _to_model(record: ModelRecord) -> Model:
@@ -124,3 +186,29 @@ def _to_inference_record(inference: Inference) -> InferenceRecord:
         completion_tokens=inference.completion_tokens,
         created_at=inference.created_at,
     )
+
+
+def _to_evaluation_result(record: EvaluationResultRecord) -> EvaluationResult:
+    return EvaluationResult(
+        id=record.id,
+        inference_id=record.inference_id,
+        metric_name=record.metric_name,
+        score=record.score,
+        reasoning=record.reasoning,
+        evaluator_name=record.evaluator_name,
+        evaluator_version=record.evaluator_version,
+        created_at=record.created_at,
+    )
+
+
+def _evaluation_result_values(result: EvaluationResult) -> dict[str, object]:
+    return {
+        "id": result.id,
+        "inference_id": result.inference_id,
+        "metric_name": result.metric_name,
+        "score": result.score,
+        "reasoning": result.reasoning,
+        "evaluator_name": result.evaluator_name,
+        "evaluator_version": result.evaluator_version,
+        "created_at": result.created_at,
+    }
