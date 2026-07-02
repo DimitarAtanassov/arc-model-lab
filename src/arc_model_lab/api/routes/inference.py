@@ -12,19 +12,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from arc_model_lab.api.dependencies import (
-    get_evaluation_service,
-    get_inference_service,
-    get_session,
-)
+from arc_model_lab.api.dependencies import get_inference_workflow, get_session
 from arc_model_lab.api.schemas import InferenceRequest, InferenceResponse
 from arc_model_lab.api.schemas.evaluations import EvaluationEnvelope
-from arc_model_lab.services.evaluation_service import EvaluationService
-from arc_model_lab.services.inference_service import InferenceService
+from arc_model_lab.services.inference_workflow import InferenceWorkflow
 
 SessionDep = Annotated[Session, Depends(get_session)]
-InferenceServiceDep = Annotated[InferenceService, Depends(get_inference_service)]
-EvaluationServiceDep = Annotated[EvaluationService, Depends(get_evaluation_service)]
+WorkflowDep = Annotated[InferenceWorkflow, Depends(get_inference_workflow)]
 
 router = APIRouter(tags=["inference"])
 
@@ -33,12 +27,15 @@ router = APIRouter(tags=["inference"])
 def infer(
     payload: InferenceRequest,
     session: SessionDep,
-    inference_service: InferenceServiceDep,
-    evaluation_service: EvaluationServiceDep,
+    workflow: WorkflowDep,
 ) -> InferenceResponse:
-    inference = inference_service.summarize(session, payload.input_text, payload.model_name)
-    response = InferenceResponse.model_validate(inference)
-    if payload.metrics:
-        outcome = evaluation_service.evaluate_inference(session, inference, payload.metrics)
-        response.evaluation = EvaluationEnvelope.from_outcome(outcome)
+    result = workflow.run(
+        session,
+        input_text=payload.input_text,
+        model_name=payload.model_name,
+        metrics=payload.metrics,
+    )
+    response = InferenceResponse.model_validate(result.inference)
+    if result.evaluation is not None:
+        response.evaluation = EvaluationEnvelope.from_outcome(result.evaluation)
     return response

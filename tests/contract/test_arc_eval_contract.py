@@ -10,7 +10,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from arc_model_lab.clients.arc_eval_client import EvalMetadata, EvalRequest, EvalResponse
+from arc_model_lab.clients.arc_eval_client import (
+    CONTRACT_VERSION,
+    EvalMetadata,
+    EvalRequest,
+    EvalResponse,
+)
 
 pytestmark = pytest.mark.contract
 
@@ -81,6 +86,24 @@ def test_response_allows_empty_results() -> None:
     response = EvalResponse.model_validate({"results": []})
 
     assert response.results == []
+
+
+def test_response_exposes_provider_contract_version() -> None:
+    response = EvalResponse.model_validate({"contract_version": "1.0.0", "results": []})
+
+    assert response.contract_version == "1.0.0"
+
+
+def test_response_without_contract_version_still_parses() -> None:
+    # An older provider that omits the field must not break the consumer.
+    assert EvalResponse.model_validate({"results": []}).contract_version is None
+
+
+def test_client_version_matches_the_provider_contract() -> None:
+    # arc-eval emits this version today. Bump CONTRACT_VERSION in lockstep when
+    # the wire contract changes so drift fails a test instead of a request.
+    provider_version = "1.0.0"
+    assert CONTRACT_VERSION == provider_version
 
 
 @pytest.mark.parametrize("missing", ["metric_name", "score", "evaluator_name"])

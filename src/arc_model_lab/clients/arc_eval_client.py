@@ -22,6 +22,10 @@ from arc_model_lab.domain import EvaluationError, UnknownMetricError
 
 _EVALUATE_PATH = "/v1/evaluate"
 
+# Wire-contract version this client is written against. arc-eval echoes its own
+# version in every response; a mismatch signals the contract has drifted.
+CONTRACT_VERSION = "1.0.0"
+
 
 class EvalMetadata(BaseModel):
     """Caller correlation ids sent to arc-eval. Extra keys are allowed."""
@@ -58,8 +62,13 @@ class EvalMetricResult(BaseModel):
 
 
 class EvalResponse(BaseModel):
-    """The arc-eval response body: only metrics that scored successfully."""
+    """The arc-eval response body: only metrics that scored successfully.
 
+    ``contract_version`` is optional so an older provider that omits it still
+    parses; when present it lets a caller detect provider drift.
+    """
+
+    contract_version: str | None = None
     results: list[EvalMetricResult]
 
 

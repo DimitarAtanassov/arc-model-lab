@@ -63,7 +63,7 @@ def test_unknown_metric_propagates_and_does_not_fail_open() -> None:
 def test_build_request_maps_inference_fields() -> None:
     inference = _inference()
 
-    request = module._build_request(inference, ["faithfulness"])
+    request = module._build_request(inference, ["faithfulness"], "summarization")
 
     assert request.task_type == "summarization"
     assert request.input_text == "source text"
@@ -72,3 +72,10 @@ def test_build_request_maps_inference_fields() -> None:
     assert request.metrics == ["faithfulness"]
     assert request.metadata.inference_id == str(inference.id)
     assert request.metadata.model_id == str(inference.model_id)
+
+
+def test_build_request_threads_task_type() -> None:
+    request = module._build_request(_inference(), None, "question_answering")
+
+    assert request.task_type == "question_answering"
+    assert request.metrics is None

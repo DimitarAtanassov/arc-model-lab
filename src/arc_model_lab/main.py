@@ -25,10 +25,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     engine = create_engine_from_url(settings.database_url, echo=settings.db_echo)
     session_factory = create_session_factory(engine)
     model_service = ModelService(settings)
-    eval_client = build_arc_eval_client(EvalSettings())
+    eval_settings = EvalSettings()
+    eval_client = build_arc_eval_client(eval_settings)
 
     app.state.engine = engine
     app.state.session_factory = session_factory
+    app.state.eval_settings = eval_settings
     app.state.model_service = model_service
     app.state.inference_service = InferenceService(model_service, settings.model_name)
     app.state.evaluation_service = EvaluationService(eval_client)

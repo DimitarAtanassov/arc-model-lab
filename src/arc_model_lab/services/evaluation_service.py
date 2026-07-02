@@ -31,9 +31,9 @@ from arc_model_lab.domain import (
 
 logger = logging.getLogger(__name__)
 
-# arc-model-lab only performs summarization today, so the task type is a
-# constant rather than configuration.
-_TASK_TYPE = "summarization"
+# arc-model-lab produces summarization interactions today. Callers thread the
+# task type through explicitly (Experiments will vary it), defaulting to this.
+DEFAULT_TASK_TYPE = "summarization"
 
 
 class EvaluationService:
@@ -43,7 +43,12 @@ class EvaluationService:
         self._client = client
 
     def evaluate_inference(
-        self, session: Session, inference: Inference, metrics: list[str] | None = None
+        self,
+        session: Session,
+        inference: Inference,
+        metrics: list[str] | None = None,
+        *,
+        task_type: str = DEFAULT_TASK_TYPE,
     ) -> EvaluationOutcome:
         """Score ``inference`` against ``metrics`` and persist the results.
 
@@ -57,7 +62,7 @@ class EvaluationService:
             return EvaluationOutcome(status=EvaluationStatus.SKIPPED)
 
         try:
-            response = self._client.evaluate(_build_request(inference, metrics))
+            response = self._client.evaluate(_build_request(inference, metrics, task_type))
         except EvaluationError:
             logger.warning(
                 "evaluation failed; failing open",
@@ -72,9 +77,9 @@ class EvaluationService:
         return EvaluationOutcome(status=EvaluationStatus.COMPLETED, results=tuple(persisted))
 
 
-def _build_request(inference: Inference, metrics: list[str] | None) -> EvalRequest:
+def _build_request(inference: Inference, metrics: list[str] | None, task_type: str) -> EvalRequest:
     return EvalRequest(
-        task_type=_TASK_TYPE,
+        task_type=task_type,
         input_text=inference.input_text,
         output_text=inference.output_text,
         prompt=inference.prompt,
