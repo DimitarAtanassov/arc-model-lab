@@ -15,15 +15,17 @@ src/arc_model_lab/
 ├── api/          FastAPI routing layer (schemas, dependencies, routes)
 ├── domain/       Pure data models (Model, Inference) — no framework imports
 ├── services/     Business logic (model loading, inference workflow)
+├── clients/      Outbound clients for external services (arc-eval)
 ├── db/           SQLAlchemy ORM models + repositories
 ├── config.py     Environment-driven settings
 └── main.py       Composition root (lifespan wiring + ASGI app)
 ```
 
-Dependencies flow inward: `api → services → db → domain`. The domain layer
-depends on nothing but the standard library and Pydantic.
+Dependencies flow inward: `api → services → db → domain`. Outbound integrations
+live in `clients/`, called by `services/` and depending only on `domain`. The
+domain layer depends on nothing but the standard library and Pydantic.
 
-### Request flow (`POST /summarize`)
+### Request flow (`POST /inference`)
 
 1. Accept `input_text`.
 2. Build chat messages (system + user) for the summarization task.
@@ -55,7 +57,7 @@ uv sync
 # 4. Apply database migrations
 make migrate            # or: uv run alembic upgrade head
 
-# 5. Seed the model catalog (required; without it /summarize returns 404)
+# 5. Seed the model catalog (required; without it /inference returns 404)
 make model.seed
 
 # 6. Run the service (model weights download lazily on first request)
@@ -86,14 +88,14 @@ Model weights download once into the `hf_cache` volume, never into the image.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/summarize` | Summarize `input_text`; persists and returns one inference |
+| `POST` | `/inference` | Run inference on `input_text`; persists and returns one inference (evaluates when `metrics` are given) |
 | `GET` | `/health` | Liveness probe |
 | `GET` | `/docs` | Interactive OpenAPI docs |
 
 Summarize a document:
 
 ```bash
-curl -s http://localhost:8000/summarize \
+curl -s http://localhost:8000/inference \
   -H 'content-type: application/json' \
   -d '{"input_text": "Large language models can summarize long documents into concise overviews."}'
 ```
@@ -118,7 +120,7 @@ To target a specific catalog model, pass its registered `name` (not the
 HuggingFace id). Omit `model_name` to use the configured default.
 
 ```bash
-curl -s http://localhost:8000/summarize \
+curl -s http://localhost:8000/inference \
   -H 'content-type: application/json' \
   -d '{"input_text": "...", "model_name": "qwen2.5-1.5b-instruct"}'
 ```
@@ -129,7 +131,7 @@ Inspect and manage the catalog from the CLI:
 make model.list                                 # list registered models
 make model.get NAME=qwen2.5-1.5b-instruct       # show one model
 make model.smoke NAME=qwen2.5-1.5b-instruct     # load + run one summary
-make model.activate NAME=gemma-3-1b-it          # allow /summarize to use it
+make model.activate NAME=gemma-3-1b-it          # allow /inference to use it
 make model.deactivate NAME=gemma-3-1b-it        # block it (returns 409)
 ```
 
@@ -148,12 +150,13 @@ ARC_EVAL_SERVICE_URL=http://localhost:8001   # empty disables evaluation
 ARC_EVAL_TIMEOUT_SECONDS=30
 ```
 
-Request evaluation inline by adding `"evaluate": true`:
+Evaluation is opt-in per request. Name the `metrics` to score the output against;
+omit them to skip evaluation entirely. An unknown metric name returns `404`:
 
 ```bash
-curl -s http://localhost:8000/summarize \
+curl -s http://localhost:8000/inference \
   -H 'content-type: application/json' \
-  -d '{"input_text": "A long article.", "evaluate": true}'
+  -d '{"input_text": "A long article.", "metrics": ["faithfulness", "answer_relevance"]}'
 ```
 
 The response carries the scores next to the summary:

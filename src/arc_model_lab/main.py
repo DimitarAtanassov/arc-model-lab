@@ -10,9 +10,9 @@ from fastapi import FastAPI
 
 from arc_model_lab.api.errors import register_exception_handlers
 from arc_model_lab.api.routes import router
+from arc_model_lab.clients.arc_eval_client import EvalSettings, build_arc_eval_client
 from arc_model_lab.config import Settings, get_settings
 from arc_model_lab.db.base import create_engine_from_url, create_session_factory
-from arc_model_lab.services.arc_eval_client import EvalSettings, build_arc_eval_client
 from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_service import ModelService

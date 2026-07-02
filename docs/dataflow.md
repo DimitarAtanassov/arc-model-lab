@@ -11,14 +11,17 @@ layout is in [architecture.md](architecture.md).
 
 ## End-to-end data flow
 
-Evaluation is optional. It runs only when a request sets `evaluate=true` and an
-`arc-eval` URL is configured. The inference path is fail-closed (a failure
-returns an error and stores nothing); the evaluation path is fail-open (a failure
-still returns the stored summary).
+Evaluation is opt-in per request: a caller that names one or more `metrics` gets
+its output scored against them; omitting `metrics` skips evaluation. When metrics
+are requested it makes a scoring call if an `arc-eval` URL is configured, and is
+skipped without error otherwise. The inference path is fail-closed (a failure
+returns an error and stores nothing); the evaluation path is fail-open (a
+transport or schema failure still returns the stored summary), except an unknown
+metric, which is a caller error surfaced as 404.
 
 ```mermaid
 flowchart LR
-    Client[Client] --> API["FastAPI POST /summarize"]
+    Client[Client] --> API["FastAPI POST /inference"]
 
     subgraph inf ["Inference path (fail-closed)"]
         API --> InfSvc[InferenceService]
@@ -29,7 +32,7 @@ flowchart LR
     end
 
     subgraph ev ["Evaluation path (fail-open)"]
-        API -->|evaluate=true| EvalSvc[EvaluationService]
+        API --> EvalSvc[EvaluationService]
         EvalSvc --> AEC[ArcEvalClient]
         AEC -->|"POST /v1/evaluate"| Arc[arc-eval service]
         Arc -->|metric scores| AEC
@@ -42,12 +45,13 @@ flowchart LR
     API --> Client
 ```
 
-## Online request: summarize with evaluation
+## Online request: inference with evaluation
 
 The route commits the inference before it calls evaluation, so the two run in
-separate transactions. `arc-eval` scores the metrics for the task type
-(`summarization` maps to faithfulness and answer relevance), persists its own
-copy, and returns only the metrics that scored.
+separate transactions. `arc-eval` scores the requested `metrics` (or, without an
+explicit list, the metrics for the task type: `summarization` maps to
+faithfulness and answer relevance), persists its own copy, and returns only the
+metrics that scored.
 
 ```mermaid
 sequenceDiagram
@@ -62,7 +66,7 @@ sequenceDiagram
     participant ERepo as EvaluationResultRepository
     participant DB as Postgres
 
-    Client->>API: POST /summarize (evaluate=true)
+    Client->>API: POST /inference
     API->>Inf: summarize(session, input_text, model_name)
     Inf->>MS: generate(model, messages)
     MS-->>Inf: GenerationResult
@@ -183,7 +187,7 @@ from the app settings.
 
 | Variable | Effect |
 | --- | --- |
-| `ARC_EVAL_SERVICE_URL` | Base URL of `arc-eval`. Empty means every `evaluate=true` request returns `skipped`. |
+| `ARC_EVAL_SERVICE_URL` | Base URL of `arc-eval`. Empty means every summary returns evaluation `skipped`. |
 | `ARC_EVAL_TIMEOUT_SECONDS` | Per-request timeout for the `arc-eval` call. |
 
 The client is built once at startup in `main.py` (`build_arc_eval_client`). When

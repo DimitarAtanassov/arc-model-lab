@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from arc_model_lab.services.arc_eval_client import EvalMetadata, EvalRequest, EvalResponse
+from arc_model_lab.clients.arc_eval_client import EvalMetadata, EvalRequest, EvalResponse
 
 pytestmark = pytest.mark.contract
 
@@ -26,12 +26,24 @@ def test_request_serializes_to_arc_eval_schema() -> None:
 
     payload = request.model_dump(mode="json")
 
-    assert set(payload) == {"task_type", "input_text", "output_text", "prompt", "metadata"}
+    assert set(payload) == {"task_type", "input_text", "output_text", "prompt", "metrics", "metadata"}
     assert isinstance(payload["task_type"], str)
     assert isinstance(payload["input_text"], str)
     assert isinstance(payload["output_text"], str)
     assert payload["prompt"] is None or isinstance(payload["prompt"], str)
+    assert payload["metrics"] is None or isinstance(payload["metrics"], list)
     assert payload["metadata"] == {"inference_id": "i-1", "model_id": "m-1"}
+
+
+def test_request_carries_optional_metrics() -> None:
+    payload = EvalRequest(
+        task_type="summarization",
+        input_text="source",
+        output_text="summary",
+        metrics=["faithfulness"],
+    ).model_dump(mode="json")
+
+    assert payload["metrics"] == ["faithfulness"]
 
 
 def test_request_requires_output_text() -> None:

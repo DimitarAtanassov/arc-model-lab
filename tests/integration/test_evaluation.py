@@ -1,4 +1,4 @@
-"""Integration: POST /summarize?evaluate=true against a mocked arc-eval.
+"""Integration: POST /inference evaluates against a mocked arc-eval when metrics are given.
 
 Exercises the full online path (inference -> eval call -> persistence -> response)
 with a real Postgres and an ``httpx.MockTransport`` standing in for arc-eval.
@@ -16,17 +16,20 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from arc_model_lab.db.models import EvaluationResultRecord
-from arc_model_lab.services.arc_eval_client import ArcEvalClient
+from arc_model_lab.clients.arc_eval_client import ArcEvalClient
+from arc_model_lab.db.models import EvaluationResultRecord, InferenceRecord
 
 pytestmark = pytest.mark.integration
 
 ClientFactory = Callable[[ArcEvalClient | None], TestClient]
 
+_METRICS = ["faithfulness", "answer_relevance"]
+
 
 def _scores_handler(request: httpx.Request) -> httpx.Response:
     body = json.loads(request.content)
     assert body["task_type"] == "summarization"
+    assert body["metrics"] == _METRICS
     assert body["output_text"] == "fake summary"
     assert body["metadata"]["inference_id"]
     return httpx.Response(
@@ -56,10 +59,14 @@ def _mock_client(handler: Callable[[httpx.Request], httpx.Response]) -> ArcEvalC
     return ArcEvalClient(httpx.Client(transport=httpx.MockTransport(handler), base_url="http://arc-eval.test"))
 
 
-def test_summarize_with_evaluate_persists_results(make_client: ClientFactory, db_session: Session) -> None:
+def _unexpected_call_handler(request: httpx.Request) -> httpx.Response:
+    raise AssertionError("arc-eval must not be called when no metrics are requested")
+
+
+def test_inference_with_metrics_persists_evaluation_results(make_client: ClientFactory, db_session: Session) -> None:
     client = make_client(_mock_client(_scores_handler))
 
-    response = client.post("/summarize", json={"input_text": "A long article.", "evaluate": True})
+    response = client.post("/inference", json={"input_text": "A long article.", "metrics": _METRICS})
 
     assert response.status_code == 201
     body = response.json()
@@ -72,29 +79,50 @@ def test_summarize_with_evaluate_persists_results(make_client: ClientFactory, db
     assert all(row.inference_id == UUID(body["id"]) for row in rows)
 
 
-def test_summarize_with_evaluate_fails_open_on_unavailable(make_client: ClientFactory, db_session: Session) -> None:
+def test_inference_without_metrics_does_not_evaluate(make_client: ClientFactory, db_session: Session) -> None:
+    # Even with an eval client wired, omitting metrics skips evaluation entirely.
+    client = make_client(_mock_client(_unexpected_call_handler))
+
+    response = client.post("/inference", json={"input_text": "A long article."})
+
+    assert response.status_code == 201
+    assert response.json()["evaluation"] is None
+    assert db_session.execute(select(EvaluationResultRecord)).scalars().all() == []
+
+
+def test_inference_evaluation_fails_open_on_unavailable(make_client: ClientFactory, db_session: Session) -> None:
     def unavailable(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"detail": "down"})
 
     client = make_client(_mock_client(unavailable))
 
-    response = client.post("/summarize", json={"input_text": "hi", "evaluate": True})
+    response = client.post("/inference", json={"input_text": "hi", "metrics": ["faithfulness"]})
 
     assert response.status_code == 201
     assert response.json()["evaluation"]["status"] == "failed"
     assert db_session.execute(select(EvaluationResultRecord)).scalars().all() == []
 
 
-def test_summarize_with_evaluate_but_no_client_is_skipped(client: TestClient) -> None:
-    response = client.post("/summarize", json={"input_text": "hi", "evaluate": True})
+def test_inference_skips_evaluation_without_eval_client(client: TestClient, db_session: Session) -> None:
+    # Metrics requested, but no eval client is configured for this environment.
+    response = client.post("/inference", json={"input_text": "hi", "metrics": ["faithfulness"]})
 
     assert response.status_code == 201
     assert response.json()["evaluation"]["status"] == "skipped"
+    assert db_session.execute(select(EvaluationResultRecord)).scalars().all() == []
 
 
-def test_summarize_without_evaluate_omits_evaluation(client: TestClient, db_session: Session) -> None:
-    response = client.post("/summarize", json={"input_text": "hi"})
+def test_unknown_metric_returns_404_and_keeps_the_inference(make_client: ClientFactory, db_session: Session) -> None:
+    def unknown_metric(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "unknown metric 'nope'"})
 
-    assert response.status_code == 201
-    assert response.json()["evaluation"] is None
+    client = make_client(_mock_client(unknown_metric))
+
+    response = client.post("/inference", json={"input_text": "hi", "metrics": ["nope"]})
+
+    # arc-eval's 404 is surfaced to the caller, not failed open.
+    assert response.status_code == 404
+    assert response.json()["detail"] == "unknown metric 'nope'"
+    # The inference itself succeeded and is persisted; only evaluation was rejected.
+    assert len(db_session.execute(select(InferenceRecord)).scalars().all()) == 1
     assert db_session.execute(select(EvaluationResultRecord)).scalars().all() == []

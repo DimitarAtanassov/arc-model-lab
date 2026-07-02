@@ -1,4 +1,4 @@
-"""Request/response contracts for the summarize endpoint."""
+"""Request/response contracts for the inference endpoint."""
 
 from __future__ import annotations
 
@@ -10,19 +10,22 @@ from pydantic import BaseModel, ConfigDict, Field
 from arc_model_lab.api.schemas.evaluations import EvaluationEnvelope
 
 
-class SummarizeRequest(BaseModel):
+class InferenceRequest(BaseModel):
     input_text: str = Field(min_length=1, description="Text to summarize.")
     model_name: str | None = Field(
         default=None,
         description="Catalog model name to use; defaults to the configured model.",
     )
-    evaluate: bool = Field(
-        default=False,
-        description="If true, evaluate the summary via arc-eval and include the scores.",
+    metrics: list[str] | None = Field(
+        default=None,
+        description=(
+            "Metrics to evaluate the output against. When omitted, the output is "
+            "not evaluated. An unknown metric name is rejected with 404."
+        ),
     )
 
 
-class SummarizeResponse(BaseModel):
+class InferenceResponse(BaseModel):
     model_config = ConfigDict(protected_namespaces=(), from_attributes=True)
 
     id: UUID  # noqa: A003 - mirrors the domain primary key

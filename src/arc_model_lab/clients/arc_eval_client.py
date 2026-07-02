@@ -18,7 +18,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from arc_model_lab.domain import EvaluationError
+from arc_model_lab.domain import EvaluationError, UnknownMetricError
 
 _EVALUATE_PATH = "/v1/evaluate"
 
@@ -39,6 +39,7 @@ class EvalRequest(BaseModel):
     input_text: str
     output_text: str
     prompt: str | None = None
+    metrics: list[str] | None = None
     metadata: EvalMetadata = Field(default_factory=EvalMetadata)
 
 
@@ -88,11 +89,24 @@ class ArcEvalClient:
         self._http = http_client
 
     def evaluate(self, request: EvalRequest) -> EvalResponse:
-        """Score one interaction. Any failure raises :class:`EvaluationError`."""
+        """Score one interaction.
+
+        Raises :class:`UnknownMetricError` when arc-eval does not define a
+        requested metric (a 404, a caller error), and :class:`EvaluationError`
+        for every other failure (transport, non-2xx, non-JSON, unexpected schema)
+        so the service layer has a single fail-open signal to reason about.
+        """
         try:
             response = self._http.post(_EVALUATE_PATH, json=request.model_dump(mode="json"))
-            response.raise_for_status()
         except httpx.HTTPError as exc:
+            raise EvaluationError("arc-eval request failed") from exc
+
+        if response.status_code == httpx.codes.NOT_FOUND:
+            raise UnknownMetricError(_error_detail(response) or "requested metric is not defined")
+
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
             raise EvaluationError("arc-eval request failed") from exc
 
         try:
@@ -115,3 +129,16 @@ def build_arc_eval_client(settings: EvalSettings) -> ArcEvalClient | None:
         return None
     http_client = httpx.Client(base_url=settings.service_url, timeout=settings.timeout_seconds)
     return ArcEvalClient(http_client)
+
+
+def _error_detail(response: httpx.Response) -> str | None:
+    """Best-effort ``detail`` string from an arc-eval error body."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if isinstance(payload, dict):
+        detail = payload.get("detail")
+        if isinstance(detail, str):
+            return detail
+    return None

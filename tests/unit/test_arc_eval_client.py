@@ -8,14 +8,14 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from arc_model_lab.domain import EvaluationError
-from arc_model_lab.services.arc_eval_client import (
+from arc_model_lab.clients.arc_eval_client import (
     ArcEvalClient,
     EvalMetadata,
     EvalRequest,
     EvalSettings,
     build_arc_eval_client,
 )
+from arc_model_lab.domain import EvaluationError, UnknownMetricError
 
 _VALID_BODY = {
     "results": [
@@ -62,6 +62,7 @@ def test_evaluate_posts_to_v1_evaluate_and_parses_results() -> None:
         "input_text": "source",
         "output_text": "summary",
         "prompt": "rendered",
+        "metrics": None,
         "metadata": {"inference_id": "i-1", "model_id": "m-1"},
     }
     assert len(response.results) == 1
@@ -74,6 +75,16 @@ def test_evaluate_raises_on_non_2xx() -> None:
         return httpx.Response(503, json={"detail": "unavailable"})
 
     with pytest.raises(EvaluationError):
+        _client(handler).evaluate(_request())
+
+
+def test_evaluate_raises_unknown_metric_on_404() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "unknown metric 'nope'"})
+
+    # A 404 is a caller error (the metric is not defined), distinct from the
+    # fail-open EvaluationError, and it carries arc-eval's detail through.
+    with pytest.raises(UnknownMetricError, match="unknown metric 'nope'"):
         _client(handler).evaluate(_request())
 
 

@@ -3,8 +3,9 @@
 Evaluation is deliberately separate from inference. It runs *after* the inference
 row is already committed, in its own unit of work, so a slow or broken evaluator
 can never corrupt inference storage. Online requests fail open (a transport or
-schema failure yields a ``FAILED`` outcome, not a 5xx); when no client is wired
-for the environment the outcome is ``SKIPPED``.
+schema failure yields a ``FAILED`` outcome, not a 5xx); an unknown metric is the
+exception, a caller error that propagates as ``UnknownMetricError`` (404). When no
+client is wired for the environment the outcome is ``SKIPPED``.
 """
 
 from __future__ import annotations
@@ -13,6 +14,12 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from arc_model_lab.clients.arc_eval_client import (
+    ArcEvalClient,
+    EvalMetadata,
+    EvalMetricResult,
+    EvalRequest,
+)
 from arc_model_lab.db.repositories import EvaluationResultRepository
 from arc_model_lab.domain import (
     EvaluationError,
@@ -20,12 +27,6 @@ from arc_model_lab.domain import (
     EvaluationResult,
     EvaluationStatus,
     Inference,
-)
-from arc_model_lab.services.arc_eval_client import (
-    ArcEvalClient,
-    EvalMetadata,
-    EvalMetricResult,
-    EvalRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,18 +42,22 @@ class EvaluationService:
     def __init__(self, client: ArcEvalClient | None) -> None:
         self._client = client
 
-    def evaluate_inference(self, session: Session, inference: Inference) -> EvaluationOutcome:
-        """Score ``inference`` and persist the results in a fresh transaction.
+    def evaluate_inference(
+        self, session: Session, inference: Inference, metrics: list[str] | None = None
+    ) -> EvaluationOutcome:
+        """Score ``inference`` against ``metrics`` and persist the results.
 
         Returns a ``SKIPPED`` outcome when evaluation is not configured, a
         ``FAILED`` outcome when the eval call fails (fail-open, nothing
-        persisted), or a ``COMPLETED`` outcome with the stored results.
+        persisted), or a ``COMPLETED`` outcome with the stored results. An unknown
+        metric raises :class:`~arc_model_lab.domain.UnknownMetricError` (a caller
+        error) instead of failing open, so the endpoint can surface it as 404.
         """
         if self._client is None:
             return EvaluationOutcome(status=EvaluationStatus.SKIPPED)
 
         try:
-            response = self._client.evaluate(_build_request(inference))
+            response = self._client.evaluate(_build_request(inference, metrics))
         except EvaluationError:
             logger.warning(
                 "evaluation failed; failing open",
@@ -67,12 +72,13 @@ class EvaluationService:
         return EvaluationOutcome(status=EvaluationStatus.COMPLETED, results=tuple(persisted))
 
 
-def _build_request(inference: Inference) -> EvalRequest:
+def _build_request(inference: Inference, metrics: list[str] | None) -> EvalRequest:
     return EvalRequest(
         task_type=_TASK_TYPE,
         input_text=inference.input_text,
         output_text=inference.output_text,
         prompt=inference.prompt,
+        metrics=metrics,
         metadata=EvalMetadata(
             inference_id=str(inference.id),
             model_id=str(inference.model_id),

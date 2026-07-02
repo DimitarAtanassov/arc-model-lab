@@ -8,6 +8,7 @@ from arc_model_lab.domain.exceptions import (
     ModelInactiveError,
     ModelLoadError,
     ModelNotFoundError,
+    UnknownMetricError,
 )
 from arc_model_lab.domain.inference import Inference
 from arc_model_lab.domain.model import Model
@@ -27,4 +28,5 @@ __all__ = [
     "ModelNotFoundError",
     "ModelStatus",
     "Provider",
+    "UnknownMetricError",
 ]

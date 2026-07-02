@@ -13,13 +13,13 @@ import os
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
+from arc_model_lab.clients.arc_eval_client import EvalSettings, build_arc_eval_client
 from arc_model_lab.db.repositories import (
     EvaluationResultRepository,
     InferenceRepository,
     ModelRepository,
 )
 from arc_model_lab.domain import EvaluationStatus, Inference, Model, Provider
-from arc_model_lab.services.arc_eval_client import EvalSettings, build_arc_eval_client
 from arc_model_lab.services.evaluation_service import EvaluationService
 
 pytestmark = [

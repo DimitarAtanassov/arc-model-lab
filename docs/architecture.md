@@ -27,6 +27,7 @@ Orthogonal ownership. Each module owns one concern and depends only inward.
 | `api/` | HTTP request and response surface, error mapping |
 | `domain/` | Business entities, enums, and domain exceptions |
 | `services/` | Business workflows (model loading, inference) |
+| `clients/` | Outbound clients for external services (arc-eval integration) |
 | `db/` | ORM models, session factory, repositories, seeding |
 | `cli/` | Operational catalog commands |
 | `config.py` | Environment-driven settings |
@@ -39,7 +40,7 @@ imports only the standard library.
 
 ```mermaid
 flowchart LR
-    Client[Client] --> API["FastAPI POST /summarize"]
+    Client[Client] --> API["FastAPI POST /inference"]
     API --> Svc[InferenceService]
     Svc --> Cat[ModelRepository]
     Svc --> MS[ModelService]
@@ -140,7 +141,7 @@ sequenceDiagram
     participant Repo as InferenceRepository
     participant DB as Postgres
 
-    Client->>API: POST /summarize
+    Client->>API: POST /inference
     API->>Svc: summarize(session, input_text, model_name)
     Svc->>Cat: get_by_name(name)
     Cat->>DB: SELECT model
@@ -180,6 +181,7 @@ message.
 | Model not active | `ModelInactiveError` | 409 |
 | Weights or tokenizer fail to load | `ModelLoadError` | 503 |
 | Generation fails | `GenerationError` | 500 |
+| Unknown evaluation metric (from arc-eval) | `UnknownMetricError` | 404 |
 | Success | | 201 |
 
 ## Model catalog and operations
@@ -193,7 +195,7 @@ the file without writing.
 
 The CLI (`src/arc_model_lab/cli/models.py`) supports `list`, `get`, `activate`,
 `deactivate`, and `smoke` (load a model and run one summary). `activate` and
-`deactivate` toggle `status`, which gates whether `/summarize` will use a model.
+`deactivate` toggle `status`, which gates whether `/inference` will use a model.
 
 ## Configuration
 
@@ -233,7 +235,7 @@ API waits for it.
 | --- | --- | --- |
 | Unit | `tests/unit/` | Prompt construction, domain, model service with a faked runtime, inference orchestration, config, CLI, seeding |
 | Integration | `tests/integration/` | Repositories and a smoke path against real Postgres via testcontainers |
-| API | `tests/api/` | `/summarize` happy path and each error mapping |
+| API | `tests/api/` | `/inference` happy path and each error mapping |
 
 Integration tests are marked `@pytest.mark.integration` and require Docker. CI
 does not download model weights; the model runtime is faked so tests stay fast

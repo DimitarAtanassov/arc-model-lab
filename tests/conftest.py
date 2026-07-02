@@ -17,13 +17,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from testcontainers.postgres import PostgresContainer
 
 from arc_model_lab.api.dependencies import get_evaluation_service, get_inference_service
+from arc_model_lab.clients.arc_eval_client import ArcEvalClient
 from arc_model_lab.config import Settings
 from arc_model_lab.db.base import Base, create_engine_from_url, create_session_factory
 from arc_model_lab.db.models import EvaluationResultRecord, InferenceRecord, ModelRecord
 from arc_model_lab.db.repositories import ModelRepository
 from arc_model_lab.domain import GenerationError, Model, ModelLoadError, Provider
 from arc_model_lab.main import create_app
-from arc_model_lab.services.arc_eval_client import ArcEvalClient
 from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_service import ChatMessage, GenerationResult, ModelService

@@ -18,11 +18,11 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from arc_model_lab.clients.arc_eval_client import EvalSettings, build_arc_eval_client
 from arc_model_lab.config import get_settings
 from arc_model_lab.db.base import create_engine_from_url, create_session_factory
 from arc_model_lab.db.repositories import InferenceRepository
 from arc_model_lab.domain import EvaluationOutcome, EvaluationStatus
-from arc_model_lab.services.arc_eval_client import EvalSettings, build_arc_eval_client
 from arc_model_lab.services.evaluation_service import EvaluationService
 
 _DEFAULT_LIMIT = 100

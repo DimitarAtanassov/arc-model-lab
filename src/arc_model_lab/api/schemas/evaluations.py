@@ -1,4 +1,4 @@
-"""Evaluation contract nested in the summarize response.
+"""Evaluation contract nested in the inference response.
 
 The inline envelope is intentionally lean: the score and its provenance, not the
 full reasoning text (which is persisted and queryable via ``evaluation_results``).
