@@ -79,3 +79,23 @@ model.smoke: prepare
 .PHONY: model.clear-cache ## Remove the local HuggingFace cache
 model.clear-cache:
 	rm -rf .cache/huggingface
+
+.PHONY: eval.run ## Evaluate a single inference by id (ID=...)
+eval.run: prepare
+	uv run python -m arc_model_lab.cli.evaluations run --inference-id $(ID)
+
+.PHONY: eval.replay ## Evaluate unevaluated inference rows (LIMIT=100)
+eval.replay: prepare
+	uv run python -m arc_model_lab.cli.evaluations replay --limit $(or $(LIMIT),100)
+
+.PHONY: eval.backfill ## Backfill evaluations over a time range (SINCE=, UNTIL=, LIMIT=)
+eval.backfill: prepare
+	uv run python -m arc_model_lab.cli.evaluations backfill $(if $(SINCE),--since $(SINCE)) $(if $(UNTIL),--until $(UNTIL)) --limit $(or $(LIMIT),100)
+
+.PHONY: eval.contract ## Run arc-eval contract tests (mocked, no live service)
+eval.contract: prepare
+	uv run pytest -m contract
+
+.PHONY: eval.smoke ## Run the end-to-end eval smoke test (needs ARC_EVAL_SERVICE_URL + arc-eval)
+eval.smoke: prepare
+	uv run pytest -m eval_smoke

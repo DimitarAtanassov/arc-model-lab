@@ -133,6 +133,60 @@ make model.activate NAME=gemma-3-1b-it          # allow /summarize to use it
 make model.deactivate NAME=gemma-3-1b-it        # block it (returns 409)
 ```
 
+## Evaluation
+
+After an inference is stored, `arc-model-lab` can send it to the `arc-eval`
+service for quality scoring. Each metric score (faithfulness, answer relevance,
+and so on) is persisted in `evaluation_results`, linked to the inference id.
+Evaluation is a separate service boundary, so inference storage never depends on
+it.
+
+Point the service at a running `arc-eval` and set a request timeout:
+
+```bash
+ARC_EVAL_SERVICE_URL=http://localhost:8001   # empty disables evaluation
+ARC_EVAL_TIMEOUT_SECONDS=30
+```
+
+Request evaluation inline by adding `"evaluate": true`:
+
+```bash
+curl -s http://localhost:8000/summarize \
+  -H 'content-type: application/json' \
+  -d '{"input_text": "A long article.", "evaluate": true}'
+```
+
+The response carries the scores next to the summary:
+
+```json
+{
+  "id": "8f0c1e2a-...",
+  "output_text": "A concise summary.",
+  "evaluation": {
+    "status": "completed",
+    "results": [
+      { "metric_name": "faithfulness", "score": 0.91, "evaluator_name": "summary-faithfulness", "evaluator_version": "v1" }
+    ]
+  }
+}
+```
+
+`status` is `completed` when `arc-eval` scored the summary, `failed` when it was
+unreachable or returned an unusable response (online requests fail open: the
+summary is still returned and stored), or `skipped` when no
+`ARC_EVAL_SERVICE_URL` is configured.
+
+Evaluate inferences that predate this feature, or whose evaluation failed, from
+the CLI. These commands upsert on the metric key, so they are safe to re-run:
+
+```bash
+make eval.run ID=<inference-uuid>                            # evaluate one inference
+make eval.replay LIMIT=100                                   # evaluate unevaluated rows
+make eval.backfill SINCE=2026-01-01 UNTIL=2026-02-01 LIMIT=500
+make eval.contract                                           # consumer contract tests (mocked)
+make eval.smoke                                              # live end-to-end (needs ARC_EVAL_SERVICE_URL)
+```
+
 ## Common tasks
 
 Run `make help` for the full list. Most-used targets:
@@ -143,6 +197,8 @@ Run `make help` for the full list. Most-used targets:
 | `make migrate` | Apply migrations to head |
 | `make model.seed` | Seed the catalog from `seeds/models.local.json` |
 | `make model.list` | List registered models |
+| `make eval.replay` | Evaluate unevaluated inferences via arc-eval |
+| `make eval.backfill` | Evaluate unevaluated inferences in a time range |
 | `make test` | Run tests with coverage |
 | `make lint` | Ruff format check, Ruff lint, mypy |
 
@@ -161,6 +217,8 @@ All settings are environment variables with the `ARC_` prefix (see
 | `ARC_MAX_NEW_TOKENS` | `256` | Generated token budget |
 | `ARC_NUM_BEAMS` | `1` | Decoding: 1 = greedy, >1 = beam search |
 | `ARC_API_PORT` | `8000` | HTTP server port |
+| `ARC_EVAL_SERVICE_URL` | (empty) | arc-eval base URL; empty disables evaluation |
+| `ARC_EVAL_TIMEOUT_SECONDS` | `30` | arc-eval request timeout (seconds) |
 
 ## Development
 

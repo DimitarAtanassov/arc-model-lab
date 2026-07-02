@@ -25,3 +25,7 @@ class GenerationError(DomainError):
 
 class InputTooLargeError(DomainError):
     """Input exceeds the maximum accepted size."""
+
+
+class EvaluationError(DomainError):
+    """Calling the evaluation service failed or returned an unusable response."""

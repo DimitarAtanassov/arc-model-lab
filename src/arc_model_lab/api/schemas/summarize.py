@@ -7,12 +7,18 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc_model_lab.api.schemas.evaluations import EvaluationEnvelope
+
 
 class SummarizeRequest(BaseModel):
     input_text: str = Field(min_length=1, description="Text to summarize.")
     model_name: str | None = Field(
         default=None,
         description="Catalog model name to use; defaults to the configured model.",
+    )
+    evaluate: bool = Field(
+        default=False,
+        description="If true, evaluate the summary via arc-eval and include the scores.",
     )
 
 
@@ -28,3 +34,4 @@ class SummarizeResponse(BaseModel):
     prompt_tokens: int | None
     completion_tokens: int | None
     created_at: datetime
+    evaluation: EvaluationEnvelope | None = None

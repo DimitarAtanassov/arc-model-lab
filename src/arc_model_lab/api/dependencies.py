@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from fastapi import Request
 from sqlalchemy.orm import Session, sessionmaker
 
+from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.inference_service import InferenceService
 
 
@@ -23,4 +24,9 @@ def get_session(request: Request) -> Iterator[Session]:
 
 def get_inference_service(request: Request) -> InferenceService:
     service: InferenceService = request.app.state.inference_service
+    return service
+
+
+def get_evaluation_service(request: Request) -> EvaluationService:
+    service: EvaluationService = request.app.state.evaluation_service
     return service
