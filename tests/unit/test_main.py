@@ -76,3 +76,31 @@ def test_lifespan_closes_eval_client_and_disposes_engine(monkeypatch: pytest.Mon
 
     assert closed is True
     assert disposed is True
+
+
+def test_lifespan_disposes_engine_without_eval_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    closed = False
+    disposed = False
+
+    class _DummyEngine:
+        def dispose(self) -> None:
+            nonlocal disposed
+            disposed = True
+
+    monkeypatch.setattr(main_module, "create_engine_from_url", lambda *args, **kwargs: _DummyEngine())
+    monkeypatch.setattr(main_module, "create_session_factory", lambda engine: object())
+    monkeypatch.setattr(main_module, "ModelService", lambda settings: object())
+    monkeypatch.setattr(main_module, "build_arc_eval_client", lambda settings: None)
+    monkeypatch.setattr(main_module, "InferenceService", lambda model_service, model_name: object())
+    monkeypatch.setattr(main_module, "EvaluationService", lambda eval_client: object())
+
+    app = create_app(Settings(database_url="postgresql://example/test"))
+
+    async def _exercise() -> None:
+        async with main_module.lifespan(app):
+            pass
+
+    asyncio.run(_exercise())
+
+    assert closed is False
+    assert disposed is True

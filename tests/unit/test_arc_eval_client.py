@@ -13,6 +13,7 @@ from arc_model_lab.clients.arc_eval_client import (
     EvalMetadata,
     EvalRequest,
     EvalSettings,
+    _error_detail,
     build_arc_eval_client,
 )
 from arc_model_lab.domain import EvaluationError, UnknownMetricError
@@ -86,6 +87,28 @@ def test_evaluate_raises_unknown_metric_on_404() -> None:
     # fail-open EvaluationError, and it carries arc-eval's detail through.
     with pytest.raises(UnknownMetricError, match="unknown metric 'nope'"):
         _client(handler).evaluate(_request())
+
+
+def test_evaluate_raises_unknown_metric_with_default_message_when_404_detail_is_missing() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"message": "no detail"})
+
+    with pytest.raises(UnknownMetricError, match="requested metric is not defined"):
+        _client(handler).evaluate(_request())
+
+
+def test_evaluate_raises_unknown_metric_with_default_message_when_404_body_is_not_json() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not json")
+
+    with pytest.raises(UnknownMetricError, match="requested metric is not defined"):
+        _client(handler).evaluate(_request())
+
+
+def test_error_detail_returns_none_for_non_object_json_payload() -> None:
+    response = httpx.Response(404, json=["not", "a", "dict"])
+
+    assert _error_detail(response) is None
 
 
 def test_evaluate_raises_on_transport_error() -> None:
