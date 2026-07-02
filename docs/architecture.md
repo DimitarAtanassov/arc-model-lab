@@ -4,11 +4,12 @@ Audience: backend engineers extending or operating the service. Reading time: 12
 
 ## Purpose
 
-`arc-model-lab` accepts text, runs local model inference, persists the inference
-record, and returns the generated result. The current surface is one
-summarization endpoint backed by a small model catalog. The service is shaped so
-that later capabilities (evaluation, datasets, training) can read from durable
-inference records without reworking this core.
+`arc-model-lab` takes text, runs a local model, saves the result, and returns it.
+The public surface is one endpoint, `POST /inference`, backed by a small catalog
+of models. A request can also ask for its output to be scored: when it names one
+or more metrics, the service sends the output to `arc-eval` and stores the scores
+against the inference. Inference and scoring are separate steps with separate
+storage, so a scoring problem can never corrupt an inference record.
 
 ## Design principles
 
@@ -40,21 +41,29 @@ imports only the standard library.
 
 ```mermaid
 flowchart LR
-    Client[Client] --> API["FastAPI POST /inference"]
-    API --> Svc[InferenceService]
-    Svc --> Cat[ModelRepository]
-    Svc --> MS[ModelService]
+    Client[Client] --> API["FastAPI (POST /inference)"]
+
+    API --> Inf[InferenceService]
+    Inf --> Models[ModelRepository]
+    Inf --> MS[ModelService]
     MS --> HF[HuggingFace Transformers]
-    Svc --> Repo[InferenceRepository]
-    Cat --> DB[(Postgres)]
-    Repo --> DB
-    Svc --> API
-    API --> Client
+    Inf --> InfRepo[InferenceRepository]
+
+    API -. "when metrics requested" .-> Eval[EvaluationService]
+    Eval --> AEC[ArcEvalClient]
+    AEC -->|HTTP| ArcEval[arc-eval service]
+    Eval --> EvalRepo[EvaluationResultRepository]
+
+    Models --> DB[(Postgres)]
+    InfRepo --> DB
+    EvalRepo --> DB
 ```
 
-`ModelService` holds an in-process cache of loaded runtimes and is created once
-at startup. `InferenceService` carries no per-request state and resolves the
-target model from the catalog on each call.
+`ModelService` keeps an in-process cache of loaded model runtimes and is created
+once at startup. `InferenceService` holds no per-request state and looks up the
+target model from the catalog on each call. `EvaluationService` runs only when a
+request names metrics; it calls `arc-eval` over HTTP after the inference is saved,
+so it never blocks or corrupts the inference result.
 
 ## Domain model
 
@@ -93,6 +102,25 @@ class Inference:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 ```
 
+`EvaluationResult` (`src/arc_model_lab/domain/evaluation.py`):
+
+```python
+@dataclass(frozen=True, slots=True)
+class EvaluationResult:
+    inference_id: UUID
+    metric_name: str
+    score: float
+    evaluator_name: str
+    reasoning: str | None = None
+    evaluator_version: str | None = None
+    id: UUID = field(default_factory=uuid4)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+```
+
+One `EvaluationResult` is one metric score for one inference. An
+`EvaluationOutcome` wraps a whole scoring attempt: its `EvaluationStatus`
+(`completed`, `failed`, or `skipped`) and, when completed, the results.
+
 `Provider` currently has one member, `huggingface`. `ModelStatus` is `active`,
 `inactive`, or `deprecated`; only `active` models serve inference. The tables
 behind these entities are documented in [database-erd.md](database-erd.md).
@@ -123,10 +151,28 @@ It does not touch HuggingFace internals or ORM types.
 
 ### Repositories
 
-`ModelRepository` and `InferenceRepository` translate between ORM rows and domain
-entities. They accept and return domain objects only; ORM types never leak past
-this boundary. Transaction control belongs to the caller: the service commits,
-and the request-scoped session rolls back on error.
+`ModelRepository`, `InferenceRepository`, and `EvaluationResultRepository`
+translate between ORM rows and domain entities. They accept and return domain
+objects only; ORM types never leak past this boundary. Transaction control
+belongs to the caller: the service commits, and the request-scoped session rolls
+back on error.
+
+### EvaluationService
+
+Owns the scoring step, which runs after the inference row is committed. It builds
+the `arc-eval` request, calls the service through `ArcEvalClient` (in `clients/`),
+writes one `evaluation_results` row per returned metric, and returns an
+`EvaluationOutcome`.
+
+Scoring is best effort and never fails the request. A transport or schema error
+returns a `failed` outcome and stores nothing. A metric the caller named but
+`arc-eval` does not define is a caller error, surfaced as `404`. When no
+`arc-eval` URL is set, the service returns `skipped` without a call. The full
+outcome logic is in [dataflow.md](dataflow.md).
+
+`ArcEvalClient` (in `clients/`) is the outbound HTTP boundary. It keeps its own
+copy of the `arc-eval` request and response shapes, so a contract change shows up
+as a failing contract test instead of a silent break.
 
 ## Request lifecycle
 
@@ -157,6 +203,10 @@ sequenceDiagram
     Svc-->>API: persisted Inference
     API-->>Client: 201 Created
 ```
+
+When the request names metrics, evaluation runs after the commit shown above and
+adds its scores to the response. That path, and its failure modes, is in
+[dataflow.md](dataflow.md).
 
 ## Persistence guarantee
 
@@ -209,6 +259,8 @@ cached. See `.env.example` for the full set. Groups:
 - Compute device: `device` (`auto`, `cpu`, `mps`, `cuda`).
 - Generation: `ARC_MAX_INPUT_TOKENS`, `ARC_MAX_NEW_TOKENS`, `ARC_NUM_BEAMS`.
 - Server: `ARC_API_HOST`, `ARC_API_PORT`.
+- Evaluation (a separate `EvalSettings`, prefix `ARC_EVAL_`): `ARC_EVAL_SERVICE_URL`
+  (empty disables scoring), `ARC_EVAL_TIMEOUT_SECONDS`.
 
 Production secrets belong in a secret store, not committed `.env` files. The
 database URL carries credentials, so it is supplied at deploy time.
@@ -233,9 +285,11 @@ API waits for it.
 
 | Layer | Location | Focus |
 | --- | --- | --- |
-| Unit | `tests/unit/` | Prompt construction, domain, model service with a faked runtime, inference orchestration, config, CLI, seeding |
-| Integration | `tests/integration/` | Repositories and a smoke path against real Postgres via testcontainers |
+| Unit | `tests/unit/` | Prompt construction, domain, the model and evaluation services with fakes, config, CLI, seeding |
+| Contract | `tests/contract/` | The `arc-eval` request and response wire shapes (mocked, no live service) |
+| Integration | `tests/integration/` | Repositories and the online path against real Postgres via testcontainers |
 | API | `tests/api/` | `/inference` happy path and each error mapping |
+| E2E | `tests/e2e/` | Live `arc-eval` smoke, skipped unless `ARC_EVAL_SERVICE_URL` is set |
 
 Integration tests are marked `@pytest.mark.integration` and require Docker. CI
 does not download model weights; the model runtime is faked so tests stay fast
@@ -268,11 +322,11 @@ and deterministic. Coverage runs with branch coverage enabled.
 
 ## Deferred capabilities
 
-These are intentionally absent until a concrete need exists: evaluation results,
-experiments, datasets, prompt versioning, training runs, a model registry,
-multi-provider inference, async or streaming inference, an event bus, and
-OpenTelemetry tracing.
+These are intentionally absent until a concrete need exists: experiments,
+datasets, prompt versioning, training runs, a model registry, multi-provider
+inference, async or streaming inference, an event bus, and OpenTelemetry tracing.
 
-The next capability is evaluation, which depends on durable inference records. It
-closes the first feedback loop: generate output, persist inference, evaluate
-output, persist score.
+Evaluation is already here. An inference can be scored by `arc-eval` and its
+per-metric results stored (see [dataflow.md](dataflow.md)), which closed the first
+feedback loop: generate output, persist the inference, score it, persist the
+score.

@@ -2,10 +2,11 @@
 
 Audience: backend engineers running or extending the service. Reading time: 5 minutes.
 
-A minimal, production-shaped service that loads a HuggingFace model, exposes a
-summarization endpoint, and records every inference in Postgres.
+A small, production-shaped service that loads a HuggingFace model, runs inference
+through a single endpoint (`POST /inference`), records every inference in
+Postgres, and can score each output through the `arc-eval` service.
 
-It is intentionally small: two domain entities, one endpoint, clean module
+It stays intentionally small: three domain entities, one endpoint, clean module
 boundaries, and no speculative abstraction.
 
 ## Architecture
@@ -27,11 +28,13 @@ domain layer depends on nothing but the standard library and Pydantic.
 
 ### Request flow (`POST /inference`)
 
-1. Accept `input_text`.
+1. Accept `input_text` (and optional `model_name` and `metrics`).
 2. Build chat messages (system + user) for the summarization task.
 3. Render the chat template and generate via the (pre-loaded) `ModelService`.
 4. Persist an `Inference` row (input, rendered prompt, output, tokens, latency).
-5. Return the stored record.
+5. If the request named `metrics`, score the output through `arc-eval` and store
+   the results; otherwise skip scoring.
+6. Return the stored record, with any scores.
 
 ## Prerequisites
 

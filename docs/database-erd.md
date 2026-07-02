@@ -2,16 +2,18 @@
 
 Audience: backend engineers working on persistence or migrations. Reading time: 6 minutes.
 
-The service persists two tables in PostgreSQL 16: `models` (the inference model
-catalog) and `inference` (one row per executed summarization). The schema is
-owned by Alembic migrations in `migrations/` and mirrored by the SQLAlchemy ORM
-in `src/arc_model_lab/db/models.py`.
+The service persists three tables in PostgreSQL 16: `models` (the inference model
+catalog), `inference` (one row per executed inference), and `evaluation_results`
+(one metric score per row, written when a request asks for scoring). The schema is
+owned by Alembic migrations in `migrations/` and mirrored by the SQLAlchemy ORM in
+`src/arc_model_lab/db/models.py`.
 
 ## Entity relationship diagram
 
 ```mermaid
 erDiagram
     models ||--o{ inference : produces
+    inference ||--o{ evaluation_results : "scored by"
 
     models {
         uuid id PK
@@ -35,6 +37,17 @@ erDiagram
         integer latency_ms
         integer prompt_tokens "nullable"
         integer completion_tokens "nullable"
+        timestamptz created_at
+    }
+
+    evaluation_results {
+        uuid id PK
+        uuid inference_id FK
+        text metric_name
+        double score
+        text reasoning "nullable"
+        text evaluator_name
+        text evaluator_version "nullable"
         timestamptz created_at
     }
 ```
@@ -91,6 +104,37 @@ Constraints:
 - `fk_inference_model_id_models` foreign key (`model_id`) references `models(id)`
   `ON DELETE RESTRICT`.
 
+## Table: evaluation_results
+
+One metric score for one inference, written by the scoring step when a request
+asks for it. One metric per row (not a JSON blob) keeps scores easy to query,
+index, and aggregate. This is a lean local copy of the score; `arc-eval` keeps its
+own richer record (judge, prompt, latency) in its own database.
+
+| Column | Type | Nullable | Default | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | uuid | no | application | Primary key, generated in the app with `uuid4` |
+| `inference_id` | uuid | no | | Foreign key to `inference.id`; the scored inference |
+| `metric_name` | text | no | | The metric that produced the score, for example `faithfulness` |
+| `score` | double precision | no | | The metric score |
+| `reasoning` | text | yes | null | Short rationale from the evaluator, when provided |
+| `evaluator_name` | text | no | | The evaluator that scored the metric |
+| `evaluator_version` | text | yes | null | Evaluator version, when provided |
+| `created_at` | timestamptz | no | `now()` | Row creation time (DB default) |
+
+Constraints:
+
+- `pk_evaluation_results` primary key on (`id`).
+- `fk_evaluation_results_inference_id_inference` foreign key (`inference_id`)
+  references `inference(id)` `ON DELETE CASCADE`.
+- `uq_evaluation_results_inference_metric_evaluator` unique on (`inference_id`,
+  `metric_name`, `evaluator_name`).
+
+The unique key is what makes replay and backfill idempotent: re-scoring an
+inference updates the existing row for that metric and evaluator instead of adding
+a duplicate. `ON DELETE CASCADE` means deleting an inference also removes its
+scores, since a score has no meaning without the inference it describes.
+
 ## Relationships
 
 `models` to `inference` is one to many. Every `inference` row references exactly
@@ -101,9 +145,14 @@ This preserves the provenance of stored inferences: a model row cannot disappear
 out from under the records it produced. To retire a model, set `status` to
 `inactive` or `deprecated` rather than deleting the row.
 
+`inference` to `evaluation_results` is also one to many. Every score references
+exactly one inference; an inference has zero or more scores, one per metric.
+Unlike the model relationship, this one cascades: deleting an inference removes
+its scores too.
+
 ## Indexes
 
-The only indexes present are those created implicitly by constraints:
+`models` and `inference` carry only the indexes their constraints create:
 
 - `pk_models`, `pk_inference` (primary keys).
 - `uq_models_name` (unique on `models.name`).
@@ -113,12 +162,18 @@ Filtering or joining large inference volumes by model or time will plan
 sequential scans. Covering indexes are deferred until query patterns and data
 volume justify the write cost.
 
+`evaluation_results` is indexed for its read paths: `inference_id`, `metric_name`,
+and `created_at` each have a b-tree index, alongside the unique key on
+(`inference_id`, `metric_name`, `evaluator_name`). These keep score-by-inference,
+score-by-metric, and time-window queries off sequential scans.
+
 ## Migration lineage
 
 | Revision | File | Change |
 | --- | --- | --- |
 | `0001_initial` | `migrations/versions/0001_initial.py` | Creates `models` and `inference` with primary keys and the `inference -> models` foreign key |
 | `0002_model_catalog_fields` | `migrations/versions/0002_model_catalog_fields.py` | Adds `models.revision`, `models.status`, `models.updated_at`, and the `ck_models_valid_status` check |
+| `0003_evaluation_results` | `migrations/versions/0003_evaluation_results.py` | Creates `evaluation_results` with its foreign key to `inference`, the unique key, and the read indexes |
 
 Constraint names are deterministic because `Base.metadata` sets a naming
 convention in `src/arc_model_lab/db/base.py`. Keep it in place so autogenerated
@@ -134,6 +189,7 @@ cross that boundary.
 | --- | --- | --- |
 | `models` | `ModelRecord` | `Model` |
 | `inference` | `InferenceRecord` | `Inference` |
+| `evaluation_results` | `EvaluationResultRecord` | `EvaluationResult` |
 
 The domain entities and the service flow that writes these rows are described in
 [architecture.md](architecture.md).

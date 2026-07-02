@@ -21,7 +21,7 @@ metric, which is a caller error surfaced as 404.
 
 ```mermaid
 flowchart LR
-    Client[Client] --> API["FastAPI POST /inference"]
+    Client[Client] --> API["FastAPI (POST /inference)"]
 
     subgraph inf ["Inference path (fail-closed)"]
         API --> InfSvc[InferenceService]
@@ -32,7 +32,7 @@ flowchart LR
     end
 
     subgraph ev ["Evaluation path (fail-open)"]
-        API --> EvalSvc[EvaluationService]
+        API -. "metrics requested" .-> EvalSvc[EvaluationService]
         EvalSvc --> AEC[ArcEvalClient]
         AEC -->|"POST /v1/evaluate"| Arc[arc-eval service]
         Arc -->|metric scores| AEC
@@ -75,7 +75,7 @@ sequenceDiagram
     Inf->>DB: COMMIT
     Inf-->>API: persisted Inference
 
-    API->>Eval: evaluate_inference(session, inference)
+    API->>Eval: evaluate_inference(session, inference, metrics)
     Eval->>AEC: evaluate(EvalRequest)
     AEC->>Arc: POST /v1/evaluate
     Arc-->>AEC: 200 results
@@ -187,7 +187,7 @@ from the app settings.
 
 | Variable | Effect |
 | --- | --- |
-| `ARC_EVAL_SERVICE_URL` | Base URL of `arc-eval`. Empty means every summary returns evaluation `skipped`. |
+| `ARC_EVAL_SERVICE_URL` | Base URL of `arc-eval`. Empty means a request that asks for metrics gets evaluation `skipped`. |
 | `ARC_EVAL_TIMEOUT_SECONDS` | Per-request timeout for the `arc-eval` call. |
 
 The client is built once at startup in `main.py` (`build_arc_eval_client`). When
