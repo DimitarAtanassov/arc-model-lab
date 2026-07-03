@@ -37,3 +37,15 @@ class UnknownMetricError(DomainError):
     Distinct from :class:`EvaluationError`: an unknown metric is a caller mistake
     (surfaced as 404), not an infrastructure failure that evaluation fails open on.
     """
+
+
+class ExperimentNotFoundError(DomainError):
+    """The requested experiment does not exist."""
+
+
+class ExperimentNameConflictError(DomainError):
+    """An experiment with the requested name already exists."""
+
+
+class InvalidGenerationConfigError(DomainError):
+    """A generation config names an unknown knob or an invalid value."""

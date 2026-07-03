@@ -99,3 +99,15 @@ eval.contract: prepare
 .PHONY: eval.smoke ## Run the end-to-end eval smoke test (needs ARC_EVAL_SERVICE_URL + arc-eval)
 eval.smoke: prepare
 	uv run pytest -m eval_smoke
+
+.PHONY: exp.create ## Create an experiment (NAME=, MODEL=)
+exp.create: prepare
+	uv run python -m arc_model_lab.cli.experiments create --name $(NAME) --model-name $(MODEL)
+
+.PHONY: exp.run ## Run an experiment against sample input (ID=, TEXT=)
+exp.run: prepare
+	uv run python -m arc_model_lab.cli.experiments run --experiment-id $(ID) --input-text "$(TEXT)"
+
+.PHONY: exp.compare ## Compare two experiments by id (ID=, OTHER=)
+exp.compare: prepare
+	uv run python -m arc_model_lab.cli.experiments compare --experiment-id $(ID) --other-id $(OTHER)

@@ -32,7 +32,7 @@ def test_run_without_metrics_skips_evaluation() -> None:
 
     assert result.inference is inference
     assert result.evaluation is None
-    inference_service.summarize.assert_called_once_with(session, "source")
+    inference_service.summarize.assert_called_once_with(session, "source", None)
     evaluation_service.evaluate_inference.assert_not_called()
 
 

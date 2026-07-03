@@ -28,7 +28,7 @@ domain layer depends on nothing but the standard library and Pydantic.
 
 ### Request flow (`POST /inference`)
 
-1. Accept `input_text` (and optional `model_name` and `metrics`).
+1. Accept `input_text` (and optional `metrics`).
 2. Build chat messages (system + user) for the summarization task.
 3. Render the chat template and generate via the (pre-loaded) `ModelService`.
 4. Persist an `Inference` row (input, rendered prompt, output, tokens, latency).
@@ -119,14 +119,9 @@ The response is the persisted inference row:
 }
 ```
 
-To target a specific catalog model, pass its registered `name` (not the
-HuggingFace id). Omit `model_name` to use the configured default.
-
-```bash
-curl -s http://localhost:8000/inference \
-  -H 'content-type: application/json' \
-  -d '{"input_text": "...", "model_name": "qwen2.5-1.5b-instruct"}'
-```
+The model is not selectable per request: every call runs on the deployed model
+(`ARC_MODEL_NAME`). Change the deployed model through configuration and restart,
+not through the request body.
 
 Inspect and manage the catalog from the CLI:
 

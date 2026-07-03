@@ -9,6 +9,7 @@ from fastapi import Depends, Request
 from sqlalchemy.orm import Session, sessionmaker
 
 from arc_model_lab.services.evaluation_service import EvaluationService
+from arc_model_lab.services.experiment_service import ExperimentService
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.inference_workflow import InferenceWorkflow
 
@@ -40,3 +41,10 @@ def get_inference_workflow(
 ) -> InferenceWorkflow:
     """Compose the inference/evaluation use case from the shared services."""
     return InferenceWorkflow(inference_service, evaluation_service)
+
+
+def get_experiment_service(
+    workflow: Annotated[InferenceWorkflow, Depends(get_inference_workflow)],
+) -> ExperimentService:
+    """Compose the experiment use case over the shared inference workflow."""
+    return ExperimentService(workflow)

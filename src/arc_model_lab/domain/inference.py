@@ -16,5 +16,6 @@ class Inference:
     latency_ms: int
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    experiment_id: UUID | None = None
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))

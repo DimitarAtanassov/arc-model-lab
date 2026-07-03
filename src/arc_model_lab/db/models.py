@@ -16,7 +16,9 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from arc_model_lab.db.base import Base
@@ -56,6 +58,9 @@ class InferenceRecord(Base):
     latency_ms: Mapped[int] = mapped_column(Integer)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    experiment_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("experiments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -86,3 +91,23 @@ class EvaluationResultRecord(Base):
     evaluator_name: Mapped[str] = mapped_column(Text)
     evaluator_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class ExperimentRecord(Base):
+    """A named, reproducible run configuration (model + generation config).
+
+    ``prompt_version_id`` is a plain nullable column, not a foreign key, until
+    phase 03 introduces prompt versions; naming it now avoids a later rename.
+    """
+
+    __tablename__ = "experiments"
+    __table_args__ = (UniqueConstraint("name"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)  # noqa: A003 - primary key
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_id: Mapped[UUID] = mapped_column(ForeignKey("models.id", ondelete="RESTRICT"), index=True)
+    prompt_version_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    generation_config: Mapped[dict[str, int]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

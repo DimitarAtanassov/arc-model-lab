@@ -20,7 +20,7 @@ from arc_model_lab.services.evaluation_service import (
     DEFAULT_TASK_TYPE,
     EvaluationService,
 )
-from arc_model_lab.services.inference_service import InferenceService
+from arc_model_lab.services.inference_service import InferenceService, RunContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,11 +47,17 @@ class InferenceWorkflow:
         session: Session,
         *,
         input_text: str,
+        context: RunContext | None = None,
         metrics: list[str] | None = None,
         task_type: str = DEFAULT_TASK_TYPE,
     ) -> InferenceResult:
-        """Generate an inference and evaluate it only when metrics are requested."""
-        inference = self._inference.summarize(session, input_text)
+        """Generate an inference and evaluate it only when metrics are requested.
+
+        ``context`` overrides the deployed model and default decoding for
+        experiment runs and tags the row with the experiment id; omitted, the
+        deployed-model ``/inference`` path is unchanged.
+        """
+        inference = self._inference.summarize(session, input_text, context)
         if not metrics:
             return InferenceResult(inference=inference)
         outcome = self._evaluation.evaluate_inference(session, inference, metrics, task_type=task_type)

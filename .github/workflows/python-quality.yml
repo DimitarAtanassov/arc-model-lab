@@ -1,0 +1,25 @@
+name: python-quality
+
+on:
+  pull_request:
+    paths:
+      - "**/*.py"
+      - "pyproject.toml"
+      - ".github/workflows/python-quality.yml"
+  push:
+    branches: [main]
+
+jobs:
+  lint-and-type:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install tools
+        run: pip install ruff mypy
+      - name: Ruff lint
+        run: ruff check .github/scripts
+      - name: Mypy strict
+        run: mypy --strict .github/scripts

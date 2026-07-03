@@ -10,7 +10,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
 
 from arc_model_lab.config import Device, Settings
-from arc_model_lab.domain import GenerationError, Model, ModelLoadError
+from arc_model_lab.domain import GenerationConfig, GenerationError, Model, ModelLoadError
 
 
 class ChatMessage(TypedDict):
@@ -106,8 +106,11 @@ class ModelService:
         self._cache[key] = runtime
         return runtime
 
-    def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
+    def generate(
+        self, model: Model, messages: list[ChatMessage], config: GenerationConfig | None = None
+    ) -> GenerationResult:
         runtime = self.load(model)
+        resolved = config if config is not None else self._default_generation_config()
         try:
             prompt = cast(
                 str,
@@ -121,7 +124,7 @@ class ModelService:
                 prompt,
                 return_tensors="pt",
                 truncation=True,
-                max_length=self._settings.max_input_tokens,
+                max_length=resolved.max_input_tokens,
             ).to(runtime.device)
             prompt_tokens = int(inputs["input_ids"].shape[1])
 
@@ -129,8 +132,8 @@ class ModelService:
             with torch.no_grad():
                 output_ids = runtime.model.generate(  # type: ignore[operator]
                     **inputs,
-                    max_new_tokens=self._settings.max_new_tokens,
-                    num_beams=self._settings.num_beams,
+                    max_new_tokens=resolved.max_new_tokens,
+                    num_beams=resolved.num_beams,
                 )
             latency_ms = int((time.perf_counter() - start) * 1000)
 
@@ -148,3 +151,11 @@ class ModelService:
             )
         except Exception as exc:  # noqa: BLE001 - surface any runtime failure as a domain error
             raise GenerationError("Text generation failed") from exc
+
+    def _default_generation_config(self) -> GenerationConfig:
+        settings = self._settings
+        return GenerationConfig(
+            max_input_tokens=settings.max_input_tokens,
+            max_new_tokens=settings.max_new_tokens,
+            num_beams=settings.num_beams,
+        )

@@ -3,13 +3,18 @@ from arc_model_lab.domain.evaluation import EvaluationOutcome, EvaluationResult
 from arc_model_lab.domain.exceptions import (
     DomainError,
     EvaluationError,
+    ExperimentNameConflictError,
+    ExperimentNotFoundError,
     GenerationError,
     InputTooLargeError,
+    InvalidGenerationConfigError,
     ModelInactiveError,
     ModelLoadError,
     ModelNotFoundError,
     UnknownMetricError,
 )
+from arc_model_lab.domain.experiment import Experiment, ExperimentMetricAggregate
+from arc_model_lab.domain.generation import GenerationConfig
 from arc_model_lab.domain.inference import Inference
 from arc_model_lab.domain.model import Model
 
@@ -19,9 +24,15 @@ __all__ = [
     "EvaluationOutcome",
     "EvaluationResult",
     "EvaluationStatus",
+    "Experiment",
+    "ExperimentMetricAggregate",
+    "ExperimentNameConflictError",
+    "ExperimentNotFoundError",
+    "GenerationConfig",
     "GenerationError",
     "Inference",
     "InputTooLargeError",
+    "InvalidGenerationConfigError",
     "Model",
     "ModelInactiveError",
     "ModelLoadError",

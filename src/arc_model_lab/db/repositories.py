@@ -9,12 +9,26 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from arc_model_lab.db.models import EvaluationResultRecord, InferenceRecord, ModelRecord
-from arc_model_lab.domain import EvaluationResult, Inference, Model, ModelStatus, Provider
+from arc_model_lab.db.models import (
+    EvaluationResultRecord,
+    ExperimentRecord,
+    InferenceRecord,
+    ModelRecord,
+)
+from arc_model_lab.domain import (
+    EvaluationResult,
+    Experiment,
+    ExperimentMetricAggregate,
+    GenerationConfig,
+    Inference,
+    Model,
+    ModelStatus,
+    Provider,
+)
 
 
 class ModelRepository:
@@ -23,6 +37,10 @@ class ModelRepository:
 
     def get_by_name(self, name: str) -> Model | None:
         record = self._session.scalar(select(ModelRecord).where(ModelRecord.name == name))
+        return _to_model(record) if record is not None else None
+
+    def get_by_id(self, model_id: UUID) -> Model | None:
+        record = self._session.get(ModelRecord, model_id)
         return _to_model(record) if record is not None else None
 
     def add(self, model: Model) -> Model:
@@ -130,6 +148,51 @@ class EvaluationResultRepository:
         return [_to_evaluation_result(record) for record in records]
 
 
+class ExperimentRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, experiment: Experiment) -> Experiment:
+        self._session.add(_to_experiment_record(experiment))
+        self._session.flush()
+        return experiment
+
+    def get(self, experiment_id: UUID) -> Experiment | None:
+        record = self._session.get(ExperimentRecord, experiment_id)
+        return _to_experiment(record) if record is not None else None
+
+    def get_by_name(self, name: str) -> Experiment | None:
+        record = self._session.scalar(select(ExperimentRecord).where(ExperimentRecord.name == name))
+        return _to_experiment(record) if record is not None else None
+
+    def aggregate_scores(self, experiment_id: UUID) -> list[ExperimentMetricAggregate]:
+        """Average score and count per metric across the experiment's evaluations.
+
+        Aggregation is a plain SQL group-by, so comparison stays indexable and
+        needs no application-side joins.
+        """
+        stmt = (
+            select(
+                EvaluationResultRecord.metric_name,
+                func.avg(EvaluationResultRecord.score).label("average_score"),
+                func.count().label("evaluated_count"),
+            )
+            .join(InferenceRecord, InferenceRecord.id == EvaluationResultRecord.inference_id)
+            .where(InferenceRecord.experiment_id == experiment_id)
+            .group_by(EvaluationResultRecord.metric_name)
+            .order_by(EvaluationResultRecord.metric_name)
+        )
+        rows = self._session.execute(stmt).all()
+        return [
+            ExperimentMetricAggregate(
+                metric_name=row.metric_name,
+                average_score=float(row.average_score),
+                evaluated_count=int(row.evaluated_count),
+            )
+            for row in rows
+        ]
+
+
 def _to_model(record: ModelRecord) -> Model:
     return Model(
         id=record.id,
@@ -170,6 +233,7 @@ def _to_inference(record: InferenceRecord) -> Inference:
         latency_ms=record.latency_ms,
         prompt_tokens=record.prompt_tokens,
         completion_tokens=record.completion_tokens,
+        experiment_id=record.experiment_id,
         created_at=record.created_at,
     )
 
@@ -184,6 +248,7 @@ def _to_inference_record(inference: Inference) -> InferenceRecord:
         latency_ms=inference.latency_ms,
         prompt_tokens=inference.prompt_tokens,
         completion_tokens=inference.completion_tokens,
+        experiment_id=inference.experiment_id,
         created_at=inference.created_at,
     )
 
@@ -212,3 +277,29 @@ def _evaluation_result_values(result: EvaluationResult) -> dict[str, object]:
         "evaluator_version": result.evaluator_version,
         "created_at": result.created_at,
     }
+
+
+def _to_experiment(record: ExperimentRecord) -> Experiment:
+    return Experiment(
+        id=record.id,
+        name=record.name,
+        description=record.description,
+        model_id=record.model_id,
+        prompt_version_id=record.prompt_version_id,
+        generation_config=GenerationConfig.from_mapping(record.generation_config),
+        created_by=record.created_by,
+        created_at=record.created_at,
+    )
+
+
+def _to_experiment_record(experiment: Experiment) -> ExperimentRecord:
+    return ExperimentRecord(
+        id=experiment.id,
+        name=experiment.name,
+        description=experiment.description,
+        model_id=experiment.model_id,
+        prompt_version_id=experiment.prompt_version_id,
+        generation_config=experiment.generation_config.to_dict(),
+        created_by=experiment.created_by,
+        created_at=experiment.created_at,
+    )

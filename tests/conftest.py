@@ -22,7 +22,7 @@ from arc_model_lab.config import Settings
 from arc_model_lab.db.base import Base, create_engine_from_url, create_session_factory
 from arc_model_lab.db.models import EvaluationResultRecord, InferenceRecord, ModelRecord
 from arc_model_lab.db.repositories import ModelRepository
-from arc_model_lab.domain import GenerationError, Model, ModelLoadError, Provider
+from arc_model_lab.domain import GenerationConfig, GenerationError, Model, ModelLoadError, Provider
 from arc_model_lab.main import create_app
 from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.inference_service import InferenceService
@@ -34,7 +34,9 @@ _TEST_MODEL_NAME = "test-model"
 class FakeModelService(ModelService):
     """Model-runtime double: never loads weights, returns deterministic output."""
 
-    def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
+    def generate(
+        self, model: Model, messages: list[ChatMessage], config: GenerationConfig | None = None
+    ) -> GenerationResult:
         return GenerationResult(
             prompt="fake-prompt",
             output_text="fake summary",
@@ -47,14 +49,18 @@ class FakeModelService(ModelService):
 class FailingModelService(FakeModelService):
     """Model-runtime double whose generation always fails."""
 
-    def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
+    def generate(
+        self, model: Model, messages: list[ChatMessage], config: GenerationConfig | None = None
+    ) -> GenerationResult:
         raise GenerationError("boom")
 
 
 class ModelLoadFailingModelService(FakeModelService):
     """Model-runtime double whose weights never load (maps to HTTP 503)."""
 
-    def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
+    def generate(
+        self, model: Model, messages: list[ChatMessage], config: GenerationConfig | None = None
+    ) -> GenerationResult:
         raise ModelLoadError("model temporarily unavailable")
 
 
