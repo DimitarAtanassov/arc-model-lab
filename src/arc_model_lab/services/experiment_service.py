@@ -76,6 +76,7 @@ class ExperimentService:
         )
 
     def results(self, session: Session, experiment_id: UUID) -> list[ExperimentMetricAggregate]:
+        self._require_experiment(session, experiment_id)
         return ExperimentRepository(session).aggregate_scores(experiment_id)
 
     def compare(
@@ -84,6 +85,8 @@ class ExperimentService:
         experiment_id_a: UUID,
         experiment_id_b: UUID,
     ) -> dict[UUID, list[ExperimentMetricAggregate]]:
+        self._require_experiment(session, experiment_id_a)
+        self._require_experiment(session, experiment_id_b)
         repository = ExperimentRepository(session)
         return {
             experiment_id_a: repository.aggregate_scores(experiment_id_a),
@@ -95,3 +98,9 @@ class ExperimentService:
         if model is None:
             raise ModelNotFoundError(f"Model not found: {model_id}")
         return model
+
+    def _require_experiment(self, session: Session, experiment_id: UUID) -> Experiment:
+        experiment = ExperimentRepository(session).get(experiment_id)
+        if experiment is None:
+            raise ExperimentNotFoundError(f"Experiment not found: {experiment_id}")
+        return experiment

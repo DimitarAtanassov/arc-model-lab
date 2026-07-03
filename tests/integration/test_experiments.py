@@ -23,6 +23,7 @@ from arc_model_lab.domain import (
     EvaluationResult,
     Experiment,
     ExperimentNameConflictError,
+    ExperimentNotFoundError,
     GenerationConfig,
     Inference,
     Model,
@@ -159,3 +160,19 @@ def test_create_rejects_duplicate_name(db_session: Session, fake_model_service: 
 
     with pytest.raises(ExperimentNameConflictError):
         service.create(db_session, _experiment(model.id, name="dup"))
+
+
+def test_results_rejects_unknown_experiment(db_session: Session, fake_model_service: ModelService) -> None:
+    service = _service(fake_model_service)
+
+    with pytest.raises(ExperimentNotFoundError):
+        service.results(db_session, uuid4())
+
+
+def test_compare_rejects_unknown_experiment(db_session: Session, fake_model_service: ModelService) -> None:
+    model = _persist_model(db_session)
+    service = _service(fake_model_service)
+    known = service.create(db_session, _experiment(model.id, name="known"))
+
+    with pytest.raises(ExperimentNotFoundError):
+        service.compare(db_session, known.id, uuid4())

@@ -93,6 +93,35 @@ def test_results_are_empty_before_evaluation(client: TestClient, session_factory
     assert response.json() == {"experiment_id": experiment["id"], "metrics": []}
 
 
+def test_results_unknown_experiment_returns_404(client: TestClient) -> None:
+    response = client.get(f"/experiments/{_UNKNOWN_ID}/results")
+    assert response.status_code == 404
+
+
+def test_compare_unknown_experiment_returns_404(client: TestClient, session_factory: sessionmaker[Session]) -> None:
+    known = _create(client, _deployed_model_id(session_factory), name="known")
+
+    response = client.get(f"/experiments/{known['id']}/compare/{_UNKNOWN_ID}")
+
+    assert response.status_code == 404
+
+
+def test_compare_returns_both_experiments(client: TestClient, session_factory: sessionmaker[Session]) -> None:
+    model_id = _deployed_model_id(session_factory)
+    left = _create(client, model_id, name="left")
+    right = _create(client, model_id, name="right")
+
+    response = client.get(f"/experiments/{left['id']}/compare/{right['id']}")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "experiments": [
+            {"experiment_id": left["id"], "metrics": []},
+            {"experiment_id": right["id"], "metrics": []},
+        ]
+    }
+
+
 def test_create_duplicate_name_returns_409(client: TestClient, session_factory: sessionmaker[Session]) -> None:
     model_id = _deployed_model_id(session_factory)
     _create(client, model_id, name="dupe")
