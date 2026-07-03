@@ -200,6 +200,7 @@ Run `make help` for the full list. Most-used targets:
 | `make model.list` | List registered models |
 | `make eval.replay` | Evaluate unevaluated inferences via arc-eval |
 | `make eval.backfill` | Evaluate unevaluated inferences in a time range |
+| `make exp.smoke` | Create, run, and compare one scored experiment (needs arc-eval) |
 | `make test` | Run tests with coverage |
 | `make lint` | Ruff format check, Ruff lint, mypy |
 

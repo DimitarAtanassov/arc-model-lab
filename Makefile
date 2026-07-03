@@ -111,3 +111,26 @@ exp.run: prepare
 .PHONY: exp.compare ## Compare two experiments by id (ID=, OTHER=)
 exp.compare: prepare
 	uv run python -m arc_model_lab.cli.experiments compare --experiment-id $(ID) --other-id $(OTHER)
+
+.PHONY: exp.smoke ## Create/run/score one experiment and verify aggregates (MODEL=, TEXT=, METRIC=)
+exp.smoke: prepare
+	@MODEL_NAME="$(or $(MODEL),$(ARC_MODEL_NAME))"; \
+	if [ -z "$$MODEL_NAME" ]; then \
+		echo "Set MODEL=<model-name> or ARC_MODEL_NAME in the environment."; \
+		exit 2; \
+	fi; \
+	INPUT_TEXT="$(or $(TEXT),The quick brown fox jumps over the lazy dog.)"; \
+	METRIC_NAME="$(or $(METRIC),faithfulness)"; \
+	EXP_NAME="smoke-$$(date +%s)"; \
+	EXP_ID="$$(uv run python -m arc_model_lab.cli.experiments create --name "$$EXP_NAME" --model-name "$$MODEL_NAME" | awk -F '\t' 'NR==1 {print $$1}')"; \
+	if [ -z "$$EXP_ID" ]; then \
+		echo "Failed to create experiment."; \
+		exit 1; \
+	fi; \
+	uv run python -m arc_model_lab.cli.experiments run --experiment-id "$$EXP_ID" --input-text "$$INPUT_TEXT" --metrics "$$METRIC_NAME" >/dev/null; \
+	COMPARE_OUTPUT="$$(uv run python -m arc_model_lab.cli.experiments compare --experiment-id "$$EXP_ID" --other-id "$$EXP_ID")"; \
+	echo "$$COMPARE_OUTPUT"; \
+	echo "$$COMPARE_OUTPUT" | grep -qv "(no scores)" || { \
+		echo "No aggregate scores found. Ensure ARC_EVAL_SERVICE_URL is set and metric '$$METRIC_NAME' exists in arc-eval."; \
+		exit 1; \
+	}
