@@ -39,6 +39,11 @@ AGENTS.md
 .github/instructions/
 .github/prompts/
 .github/skills/
+.github/README.md
+.github/USAGE.md
+.github/scripts/
+.github/workflows/python-quality.yml
+.github/workflows/validate-stack.yml
 
 # test coverage artifacts
 .coverage
