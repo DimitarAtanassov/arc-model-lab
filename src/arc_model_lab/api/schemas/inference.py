@@ -11,11 +11,12 @@ from arc_model_lab.api.schemas.evaluations import EvaluationEnvelope
 
 
 class InferenceRequest(BaseModel):
+    # The caller does not choose the model: every request runs on the deployed
+    # model. ``extra="forbid"`` rejects a stale ``model_name`` with 422 rather
+    # than silently ignoring it.
+    model_config = ConfigDict(extra="forbid")
+
     input_text: str = Field(min_length=1, description="Text to summarize.")
-    model_name: str | None = Field(
-        default=None,
-        description="Catalog model name to use; defaults to the configured model.",
-    )
     metrics: list[str] | None = Field(
         default=None,
         description=(

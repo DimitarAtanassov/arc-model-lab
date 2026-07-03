@@ -47,12 +47,11 @@ class InferenceWorkflow:
         session: Session,
         *,
         input_text: str,
-        model_name: str | None = None,
         metrics: list[str] | None = None,
         task_type: str = DEFAULT_TASK_TYPE,
     ) -> InferenceResult:
         """Generate an inference and evaluate it only when metrics are requested."""
-        inference = self._inference.summarize(session, input_text, model_name)
+        inference = self._inference.summarize(session, input_text)
         if not metrics:
             return InferenceResult(inference=inference)
         outcome = self._evaluation.evaluate_inference(session, inference, metrics, task_type=task_type)

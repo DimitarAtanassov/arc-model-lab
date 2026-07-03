@@ -28,13 +28,11 @@ def test_run_without_metrics_skips_evaluation() -> None:
     evaluation_service = MagicMock()
     session = MagicMock(spec=Session)
 
-    result = InferenceWorkflow(inference_service, evaluation_service).run(
-        session, input_text="source", model_name=None, metrics=None
-    )
+    result = InferenceWorkflow(inference_service, evaluation_service).run(session, input_text="source", metrics=None)
 
     assert result.inference is inference
     assert result.evaluation is None
-    inference_service.summarize.assert_called_once_with(session, "source", None)
+    inference_service.summarize.assert_called_once_with(session, "source")
     evaluation_service.evaluate_inference.assert_not_called()
 
 

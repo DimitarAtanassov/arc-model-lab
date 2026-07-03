@@ -33,25 +33,27 @@ def build_summary_messages(input_text: str) -> list[ChatMessage]:
 class InferenceService:
     """Coordinates a single summarization request end to end.
 
-    The model is resolved per request from the catalog by name. Unknown names
-    raise ``ModelNotFoundError``; non-active models raise ``ModelInactiveError``.
-    The commit happens here so a row is persisted before any success response.
+    The model is not chosen by the caller: every request runs on the deployed
+    model named in configuration. A deployed model that is absent from the
+    catalog raises ``ModelNotFoundError`` and one that is not active raises
+    ``ModelInactiveError``; both are server-side misconfigurations, not client
+    input. The commit happens here so a row is persisted before any success
+    response.
     """
 
-    def __init__(self, model_service: ModelService, default_model_name: str) -> None:
+    def __init__(self, model_service: ModelService, deployed_model_name: str) -> None:
         self._model_service = model_service
-        self._default_model_name = default_model_name
+        self._deployed_model_name = deployed_model_name
 
-    def summarize(self, session: Session, input_text: str, model_name: str | None = None) -> Inference:
+    def summarize(self, session: Session, input_text: str) -> Inference:
         if len(input_text) > _MAX_INPUT_CHARS:
             raise InputTooLargeError(f"Input exceeds {_MAX_INPUT_CHARS} characters")
 
-        name = model_name or self._default_model_name
-        model = ModelRepository(session).get_by_name(name)
+        model = ModelRepository(session).get_by_name(self._deployed_model_name)
         if model is None:
-            raise ModelNotFoundError(f"Model not found: {name}")
+            raise ModelNotFoundError(f"Deployed model not found: {self._deployed_model_name}")
         if model.status != ModelStatus.ACTIVE:
-            raise ModelInactiveError(f"Model is not active: {name}")
+            raise ModelInactiveError(f"Deployed model is not active: {self._deployed_model_name}")
 
         messages = build_summary_messages(input_text)
         result = self._model_service.generate(model, messages)

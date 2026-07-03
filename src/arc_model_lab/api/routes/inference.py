@@ -32,7 +32,6 @@ def infer(
     result = workflow.run(
         session,
         input_text=payload.input_text,
-        model_name=payload.model_name,
         metrics=payload.metrics,
     )
     response = InferenceResponse.model_validate(result.inference)
