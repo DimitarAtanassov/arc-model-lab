@@ -167,7 +167,7 @@ def test_run_prints_scores_when_evaluation_present(
         def run(self, *args: object, **kwargs: object) -> InferenceResult:
             return scored
 
-    monkeypatch.setattr(cli, "_experiment_service", lambda: _Service())
+    monkeypatch.setattr(cli, "_experiment_service", _Service)
     monkeypatch.setattr(cli, "_in_session", lambda op: op(None))
 
     cli._run(_ID, "hello", ["faithfulness", "relevance"])
@@ -198,7 +198,7 @@ def test_run_prints_dash_when_evaluation_empty(
         def run(self, *args: object, **kwargs: object) -> InferenceResult:
             return no_scores
 
-    monkeypatch.setattr(cli, "_experiment_service", lambda: _Service())
+    monkeypatch.setattr(cli, "_experiment_service", _Service)
     monkeypatch.setattr(cli, "_in_session", lambda op: op(None))
 
     cli._run(_ID, "hello", ["faithfulness"])
