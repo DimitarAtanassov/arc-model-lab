@@ -14,15 +14,25 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arc_model_lab.domain import Experiment, ExperimentMetricAggregate, GenerationConfig
+from arc_model_lab.domain import (
+    Experiment,
+    ExperimentMetricAggregate,
+    ExperimentResults,
+    GenerationConfig,
+)
+from arc_model_lab.domain.generation import (
+    DEFAULT_MAX_INPUT_TOKENS,
+    DEFAULT_MAX_NEW_TOKENS,
+    DEFAULT_NUM_BEAMS,
+)
 
 
 class GenerationConfigSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    max_input_tokens: int = Field(default=1024, ge=1)
-    max_new_tokens: int = Field(default=256, ge=1)
-    num_beams: int = Field(default=1, ge=1)
+    max_input_tokens: int = Field(default=DEFAULT_MAX_INPUT_TOKENS, ge=1)
+    max_new_tokens: int = Field(default=DEFAULT_MAX_NEW_TOKENS, ge=1)
+    num_beams: int = Field(default=DEFAULT_NUM_BEAMS, ge=1)
 
     def to_domain(self) -> GenerationConfig:
         return GenerationConfig(
@@ -47,7 +57,10 @@ class ExperimentCreateRequest(BaseModel):
     description: str | None = None
     model_id: UUID = Field(description="Catalog model to run under this experiment.")
     generation_config: GenerationConfigSchema = Field(default_factory=GenerationConfigSchema)
-    created_by: str | None = None
+    created_by: str | None = Field(
+        default=None,
+        description="Optional caller-supplied label; not authenticated, so not a trustworthy attribution.",
+    )
 
     def to_domain(self) -> Experiment:
         return Experiment(
@@ -110,6 +123,17 @@ class ExperimentResultsResponse(BaseModel):
     experiment_id: UUID
     metrics: list[MetricAggregateOut]
 
+    @classmethod
+    def from_domain(cls, result: ExperimentResults) -> ExperimentResultsResponse:
+        return cls(
+            experiment_id=result.experiment_id,
+            metrics=[MetricAggregateOut.from_domain(aggregate) for aggregate in result.metrics],
+        )
+
 
 class ExperimentComparisonResponse(BaseModel):
     experiments: list[ExperimentResultsResponse]
+
+    @classmethod
+    def from_domain(cls, results: list[ExperimentResults]) -> ExperimentComparisonResponse:
+        return cls(experiments=[ExperimentResultsResponse.from_domain(result) for result in results])

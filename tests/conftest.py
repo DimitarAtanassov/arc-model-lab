@@ -20,7 +20,7 @@ from arc_model_lab.api.dependencies import get_evaluation_service, get_inference
 from arc_model_lab.clients.arc_eval_client import ArcEvalClient
 from arc_model_lab.config import Settings
 from arc_model_lab.db.base import Base, create_engine_from_url, create_session_factory
-from arc_model_lab.db.models import EvaluationResultRecord, InferenceRecord, ModelRecord
+from arc_model_lab.db.models import EvaluationResultRecord, ExperimentRecord, InferenceRecord, ModelRecord
 from arc_model_lab.db.repositories import ModelRepository
 from arc_model_lab.domain import GenerationConfig, GenerationError, Model, ModelLoadError, Provider
 from arc_model_lab.main import create_app
@@ -78,14 +78,19 @@ def build_app(
     session_factory: sessionmaker[Session],
     *,
     eval_client: ArcEvalClient | None = None,
+    deployed_model_name: str = _TEST_MODEL_NAME,
 ) -> FastAPI:
-    """Build an app wired to a test session factory and a fake model runtime."""
+    """Build an app wired to a test session factory and a fake model runtime.
+
+    ``deployed_model_name`` defaults to the seeded active model; point it at an
+    absent name to exercise the deployed-model-unavailable (503) path.
+    """
     app = create_app()
     app.state.session_factory = session_factory
     with session_factory() as session:
         ModelRepository(session).upsert(_test_model())
         session.commit()
-    app.dependency_overrides[get_inference_service] = lambda: InferenceService(model_service, _TEST_MODEL_NAME)
+    app.dependency_overrides[get_inference_service] = lambda: InferenceService(model_service, deployed_model_name)
     app.dependency_overrides[get_evaluation_service] = lambda: EvaluationService(eval_client)
     return app
 
@@ -135,6 +140,9 @@ def _isolate_db(request: pytest.FixtureRequest) -> Iterator[None]:
         with factory() as session:
             session.execute(delete(EvaluationResultRecord))
             session.execute(delete(InferenceRecord))
+            # experiments references models via a RESTRICT FK, so it must be
+            # cleared before models or the delete below fails.
+            session.execute(delete(ExperimentRecord))
             session.execute(delete(ModelRecord))
             session.commit()
     return
@@ -171,3 +179,11 @@ def failing_client(settings: Settings, session_factory: sessionmaker[Session]) -
 @pytest.fixture
 def model_load_failing_client(settings: Settings, session_factory: sessionmaker[Session]) -> TestClient:
     return TestClient(build_app(ModelLoadFailingModelService(settings), session_factory))
+
+
+@pytest.fixture
+def unavailable_model_client(
+    fake_model_service: FakeModelService, session_factory: sessionmaker[Session]
+) -> TestClient:
+    """Client whose configured deployed model is absent from the catalog (maps to 503)."""
+    return TestClient(build_app(fake_model_service, session_factory, deployed_model_name="not-deployed"))

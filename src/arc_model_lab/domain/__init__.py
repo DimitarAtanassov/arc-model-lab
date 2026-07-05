@@ -1,6 +1,8 @@
 from arc_model_lab.domain.enums import EvaluationStatus, ModelStatus, Provider
 from arc_model_lab.domain.evaluation import EvaluationOutcome, EvaluationResult
 from arc_model_lab.domain.exceptions import (
+    CorruptStoredDataError,
+    DeployedModelUnavailableError,
     DomainError,
     EvaluationError,
     ExperimentNameConflictError,
@@ -8,17 +10,18 @@ from arc_model_lab.domain.exceptions import (
     GenerationError,
     InputTooLargeError,
     InvalidGenerationConfigError,
-    ModelInactiveError,
     ModelLoadError,
     ModelNotFoundError,
     UnknownMetricError,
 )
-from arc_model_lab.domain.experiment import Experiment, ExperimentMetricAggregate
+from arc_model_lab.domain.experiment import Experiment, ExperimentMetricAggregate, ExperimentResults
 from arc_model_lab.domain.generation import GenerationConfig
 from arc_model_lab.domain.inference import Inference
 from arc_model_lab.domain.model import Model
 
 __all__ = [
+    "CorruptStoredDataError",
+    "DeployedModelUnavailableError",
     "DomainError",
     "EvaluationError",
     "EvaluationOutcome",
@@ -28,13 +31,13 @@ __all__ = [
     "ExperimentMetricAggregate",
     "ExperimentNameConflictError",
     "ExperimentNotFoundError",
+    "ExperimentResults",
     "GenerationConfig",
     "GenerationError",
     "Inference",
     "InputTooLargeError",
     "InvalidGenerationConfigError",
     "Model",
-    "ModelInactiveError",
     "ModelLoadError",
     "ModelNotFoundError",
     "ModelStatus",

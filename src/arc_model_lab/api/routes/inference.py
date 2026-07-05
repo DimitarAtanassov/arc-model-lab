@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 
 from arc_model_lab.api.dependencies import get_inference_workflow, get_session
 from arc_model_lab.api.schemas import InferenceRequest, InferenceResponse
-from arc_model_lab.api.schemas.evaluations import EvaluationEnvelope
 from arc_model_lab.services.inference_workflow import InferenceWorkflow
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -34,7 +33,4 @@ def infer(
         input_text=payload.input_text,
         metrics=payload.metrics,
     )
-    response = InferenceResponse.model_validate(result.inference)
-    if result.evaluation is not None:
-        response.evaluation = EvaluationEnvelope.from_outcome(result.evaluation)
-    return response
+    return InferenceResponse.from_inference(result.inference, result.evaluation)

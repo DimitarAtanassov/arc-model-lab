@@ -49,8 +49,6 @@ def upgrade() -> None:
         ),
         sa.UniqueConstraint("name", name="uq_experiments_name"),
     )
-    # New empty table: a plain index build is safe (no traffic, no lock contention).
-    op.create_index("ix_experiments_model_id", "experiments", ["model_id"])
 
     # Adding a NULLable column is instant in PG 11+ (no table rewrite). The FK
     # validates instantly because every existing row is NULL.
@@ -64,28 +62,9 @@ def upgrade() -> None:
         ondelete="SET NULL",
     )
 
-    # `inference` is a live table, so index it CONCURRENTLY (outside the migration
-    # transaction) to avoid blocking writes.
-    with op.get_context().autocommit_block():
-        op.create_index(
-            "ix_inference_experiment_id",
-            "inference",
-            ["experiment_id"],
-            postgresql_concurrently=True,
-            if_not_exists=True,
-        )
-
 
 def downgrade() -> None:
-    with op.get_context().autocommit_block():
-        op.drop_index(
-            "ix_inference_experiment_id",
-            table_name="inference",
-            postgresql_concurrently=True,
-            if_exists=True,
-        )
     op.drop_constraint("fk_inference_experiment_id_experiments", "inference", type_="foreignkey")
     op.drop_column("inference", "experiment_id")
 
-    op.drop_index("ix_experiments_model_id", table_name="experiments")
     op.drop_table("experiments")

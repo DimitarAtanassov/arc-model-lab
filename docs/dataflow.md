@@ -67,7 +67,8 @@ sequenceDiagram
     participant DB as Postgres
 
     Client->>API: POST /inference
-    API->>Inf: summarize(session, input_text, model_name)
+    API->>Inf: summarize(session, input_text)
+    Inf->>Inf: resolve deployed model (503 if missing/inactive)
     Inf->>MS: generate(model, messages)
     MS-->>Inf: GenerationResult
     Inf->>IRepo: add(inference)

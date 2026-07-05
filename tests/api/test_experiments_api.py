@@ -136,3 +136,24 @@ def test_create_duplicate_name_returns_409(client: TestClient, session_factory: 
     )
 
     assert response.status_code == 409
+
+
+def test_run_response_includes_experiment_id(client: TestClient, session_factory: sessionmaker[Session]) -> None:
+    experiment = _create(client, _deployed_model_id(session_factory), name="tagged")
+
+    response = client.post(f"/experiments/{experiment['id']}/run", json={"input_text": "summarize me"})
+
+    assert response.status_code == 201, response.text
+    assert response.json()["experiment_id"] == experiment["id"]
+
+
+def test_compare_same_experiment_returns_two_entries(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    experiment = _create(client, _deployed_model_id(session_factory), name="solo-api")
+
+    response = client.get(f"/experiments/{experiment['id']}/compare/{experiment['id']}")
+
+    assert response.status_code == 200
+    experiments = response.json()["experiments"]
+    assert [entry["experiment_id"] for entry in experiments] == [experiment["id"], experiment["id"]]

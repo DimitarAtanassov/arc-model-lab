@@ -11,8 +11,12 @@ class ModelNotFoundError(DomainError):
     """The requested model is not registered in the catalog."""
 
 
-class ModelInactiveError(DomainError):
-    """The requested model exists but is not available for inference."""
+class DeployedModelUnavailableError(DomainError):
+    """The configured deployed model is missing or inactive.
+
+    A server-side misconfiguration, not a client mistake: callers of ``/inference``
+    do not choose the model, so this surfaces as 503, not 404/409.
+    """
 
 
 class ModelLoadError(DomainError):
@@ -48,4 +52,18 @@ class ExperimentNameConflictError(DomainError):
 
 
 class InvalidGenerationConfigError(DomainError):
-    """A generation config names an unknown knob or an invalid value."""
+    """A generation config names an unknown knob or an invalid value.
+
+    A client-boundary validation error (422). Its read-path counterpart is
+    :class:`CorruptStoredDataError`: the same failure on data loaded from storage
+    is a server fault (500), not a client mistake.
+    """
+
+
+class CorruptStoredDataError(DomainError):
+    """Persisted data failed validation when read back into the domain.
+
+    A server-side data-integrity fault: the repository raises it when stored JSON
+    (for example an experiment's generation config) cannot be rebuilt, so it
+    surfaces as 500, unlike the 422 a client boundary returns for invalid input.
+    """

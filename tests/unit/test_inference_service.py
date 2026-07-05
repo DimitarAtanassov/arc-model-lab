@@ -9,17 +9,17 @@ import pytest
 from sqlalchemy.orm import Session
 
 from arc_model_lab.domain import (
+    DeployedModelUnavailableError,
     GenerationConfig,
     InputTooLargeError,
     Model,
-    ModelInactiveError,
-    ModelNotFoundError,
     ModelStatus,
     Provider,
 )
 from arc_model_lab.services import inference_service as inference_service_module
-from arc_model_lab.services.inference_service import InferenceService, RunContext
+from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_service import ModelService
+from arc_model_lab.services.run_context import RunContext
 
 
 def test_summarize_rejects_oversized_input(fake_model_service: ModelService) -> None:
@@ -48,7 +48,7 @@ def test_summarize_resolves_the_deployed_model_and_raises_when_missing(
 
     service = InferenceService(fake_model_service, "deployed")
 
-    with pytest.raises(ModelNotFoundError):
+    with pytest.raises(DeployedModelUnavailableError):
         service.summarize(MagicMock(spec=Session), "hello")
     repository.get_by_name.assert_called_once_with("deployed")
 
@@ -62,7 +62,7 @@ def test_summarize_raises_when_deployed_model_inactive(
 
     service = InferenceService(fake_model_service, "deployed")
 
-    with pytest.raises(ModelInactiveError):
+    with pytest.raises(DeployedModelUnavailableError):
         service.summarize(MagicMock(spec=Session), "hello")
 
 

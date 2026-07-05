@@ -11,8 +11,11 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from arc_model_lab.config import Settings
+from arc_model_lab.db.models import ExperimentRecord
 from arc_model_lab.db.repositories import (
     EvaluationResultRepository,
     ExperimentRepository,
@@ -20,6 +23,7 @@ from arc_model_lab.db.repositories import (
     ModelRepository,
 )
 from arc_model_lab.domain import (
+    CorruptStoredDataError,
     EvaluationResult,
     Experiment,
     ExperimentNameConflictError,
@@ -34,9 +38,29 @@ from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.experiment_service import ExperimentService
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.inference_workflow import InferenceWorkflow
-from arc_model_lab.services.model_service import ModelService
+from arc_model_lab.services.model_service import ChatMessage, GenerationResult, ModelService
 
 pytestmark = pytest.mark.integration
+
+
+class _CapturingModelService(ModelService):
+    """Model-runtime double that records the generation config it was handed."""
+
+    def __init__(self, settings: Settings) -> None:
+        super().__init__(settings)
+        self.configs: list[GenerationConfig | None] = []
+
+    def generate(
+        self, model: Model, messages: list[ChatMessage], config: GenerationConfig | None = None
+    ) -> GenerationResult:
+        self.configs.append(config)
+        return GenerationResult(
+            prompt="fake-prompt",
+            output_text="fake summary",
+            prompt_tokens=3,
+            completion_tokens=2,
+            latency_ms=1,
+        )
 
 
 def _config() -> GenerationConfig:
@@ -176,3 +200,50 @@ def test_compare_rejects_unknown_experiment(db_session: Session, fake_model_serv
 
     with pytest.raises(ExperimentNotFoundError):
         service.compare(db_session, known.id, uuid4())
+
+
+def test_run_uses_the_experiment_generation_config(db_session: Session, settings: Settings) -> None:
+    model = _persist_model(db_session)
+    capturing = _CapturingModelService(settings)
+    service = _service(capturing)
+    config = GenerationConfig(max_input_tokens=128, max_new_tokens=32, num_beams=3)
+    experiment = service.create(db_session, Experiment(name="cfg", model_id=model.id, generation_config=config))
+
+    service.run(db_session, experiment.id, "summarize this")
+
+    assert capturing.configs == [config]
+
+
+def test_compare_with_the_same_id_returns_two_entries(db_session: Session, fake_model_service: ModelService) -> None:
+    model = _persist_model(db_session)
+    service = _service(fake_model_service)
+    experiment = service.create(db_session, _experiment(model.id, name="solo"))
+
+    comparison = service.compare(db_session, experiment.id, experiment.id)
+
+    assert [result.experiment_id for result in comparison] == [experiment.id, experiment.id]
+
+
+def test_add_reraises_foreign_key_violation(db_session: Session) -> None:
+    # A non-existent model_id violates the RESTRICT foreign key, not the name
+    # unique constraint: it must surface as IntegrityError, not a name conflict.
+    repo = ExperimentRepository(db_session)
+
+    with pytest.raises(IntegrityError):
+        repo.add(_experiment(uuid4(), name="orphan"))
+
+
+def test_get_raises_on_corrupt_stored_generation_config(db_session: Session) -> None:
+    model = _persist_model(db_session)
+    db_session.add(
+        ExperimentRecord(
+            id=uuid4(),
+            name="corrupt",
+            model_id=model.id,
+            generation_config={"temperature": 1},
+        )
+    )
+    db_session.commit()
+
+    with pytest.raises(CorruptStoredDataError):
+        ExperimentRepository(db_session).get_by_name("corrupt")

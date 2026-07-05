@@ -20,7 +20,8 @@ from arc_model_lab.services.evaluation_service import (
     DEFAULT_TASK_TYPE,
     EvaluationService,
 )
-from arc_model_lab.services.inference_service import InferenceService, RunContext
+from arc_model_lab.services.inference_service import InferenceService
+from arc_model_lab.services.run_context import RunContext
 
 
 @dataclass(frozen=True, slots=True)

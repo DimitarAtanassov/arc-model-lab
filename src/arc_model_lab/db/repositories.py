@@ -11,6 +11,7 @@ from uuid import UUID
 
 from sqlalchemy import exists, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from arc_model_lab.db.models import (
@@ -20,11 +21,14 @@ from arc_model_lab.db.models import (
     ModelRecord,
 )
 from arc_model_lab.domain import (
+    CorruptStoredDataError,
     EvaluationResult,
     Experiment,
     ExperimentMetricAggregate,
+    ExperimentNameConflictError,
     GenerationConfig,
     Inference,
+    InvalidGenerationConfigError,
     Model,
     ModelStatus,
     Provider,
@@ -149,12 +153,29 @@ class EvaluationResultRepository:
 
 
 class ExperimentRepository:
+    # Names the DB-generated unique constraint (see the metadata naming
+    # convention in db.base) so a duplicate name is told apart from other
+    # integrity violations such as the model_id foreign key.
+    _NAME_CONSTRAINT = "uq_experiments_name"
+
     def __init__(self, session: Session) -> None:
         self._session = session
 
     def add(self, experiment: Experiment) -> Experiment:
+        """Insert an experiment, mapping a duplicate name to a domain conflict.
+
+        The unique constraint is the authoritative guard (including against a
+        concurrent create); only that violation is a caller conflict. Any other
+        IntegrityError (for example the model_id foreign key) propagates unchanged
+        so it is never misreported as a name conflict.
+        """
         self._session.add(_to_experiment_record(experiment))
-        self._session.flush()
+        try:
+            self._session.flush()
+        except IntegrityError as exc:
+            if _violates_constraint(exc, self._NAME_CONSTRAINT):
+                raise ExperimentNameConflictError(f"Experiment name already exists: {experiment.name}") from exc
+            raise
         return experiment
 
     def get(self, experiment_id: UUID) -> Experiment | None:
@@ -286,10 +307,23 @@ def _to_experiment(record: ExperimentRecord) -> Experiment:
         description=record.description,
         model_id=record.model_id,
         prompt_version_id=record.prompt_version_id,
-        generation_config=GenerationConfig.from_mapping(record.generation_config),
+        generation_config=_load_generation_config(record),
         created_by=record.created_by,
         created_at=record.created_at,
     )
+
+
+def _load_generation_config(record: ExperimentRecord) -> GenerationConfig:
+    """Rebuild the stored generation config, treating corruption as a server fault.
+
+    Stored config passed validation on write, so a failure reading it back is data
+    corruption, not a client error: re-raise as CorruptStoredDataError (500) rather
+    than let InvalidGenerationConfigError surface a read fault as a 422.
+    """
+    try:
+        return GenerationConfig.from_mapping(record.generation_config)
+    except InvalidGenerationConfigError as exc:
+        raise CorruptStoredDataError(f"Corrupt generation config for experiment {record.id}: {exc}") from exc
 
 
 def _to_experiment_record(experiment: Experiment) -> ExperimentRecord:
@@ -303,3 +337,15 @@ def _to_experiment_record(experiment: Experiment) -> ExperimentRecord:
         created_by=experiment.created_by,
         created_at=experiment.created_at,
     )
+
+
+def _violates_constraint(error: IntegrityError, constraint: str) -> bool:
+    """True when the IntegrityError is a violation of the named DB constraint.
+
+    Reads the constraint name from the psycopg diagnostics so a unique-name
+    violation can be told apart from other integrity failures (for example a
+    foreign key). Falls back to False when the driver exposes no constraint name,
+    so an unclassifiable error is re-raised rather than mislabeled.
+    """
+    diagnostic = getattr(error.orig, "diag", None)
+    return bool(getattr(diagnostic, "constraint_name", None) == constraint)

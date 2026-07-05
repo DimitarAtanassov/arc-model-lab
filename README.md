@@ -121,7 +121,9 @@ The response is the persisted inference row:
 
 The model is not selectable per request: every call runs on the deployed model
 (`ARC_MODEL_NAME`). Change the deployed model through configuration and restart,
-not through the request body.
+not through the request body. If the deployed model is missing from the catalog
+or inactive, `/inference` returns 503 (a server-side misconfiguration), not a
+client 4xx.
 
 Inspect and manage the catalog from the CLI:
 
@@ -129,8 +131,8 @@ Inspect and manage the catalog from the CLI:
 make model.list                                 # list registered models
 make model.get NAME=qwen2.5-1.5b-instruct       # show one model
 make model.smoke NAME=qwen2.5-1.5b-instruct     # load + run one summary
-make model.activate NAME=gemma-3-1b-it          # allow /inference to use it
-make model.deactivate NAME=gemma-3-1b-it        # block it (returns 409)
+make model.activate NAME=gemma-3-1b-it          # mark it active (deployable)
+make model.deactivate NAME=gemma-3-1b-it        # mark it inactive (503 if it is the deployed model)
 ```
 
 ## Evaluation

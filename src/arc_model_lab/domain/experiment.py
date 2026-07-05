@@ -35,3 +35,16 @@ class ExperimentMetricAggregate:
     metric_name: str
     average_score: float
     evaluated_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ExperimentResults:
+    """An experiment's aggregated metric scores, tagged with its id.
+
+    The unit of comparison: pairing each id with its aggregates keeps two
+    experiments distinct even when an experiment is compared with itself, which a
+    map keyed by id would silently collapse to one entry.
+    """
+
+    experiment_id: UUID
+    metrics: list[ExperimentMetricAggregate]

@@ -227,10 +227,11 @@ message.
 | --- | --- | --- |
 | Empty `input_text` | Pydantic validation | 422 |
 | Input over 50,000 characters | `InputTooLargeError` | 413 |
-| Unknown model name | `ModelNotFoundError` | 404 |
-| Model not active | `ModelInactiveError` | 409 |
+| Unknown model referenced (e.g. experiment target) | `ModelNotFoundError` | 404 |
+| Deployed model missing or inactive | `DeployedModelUnavailableError` | 503 |
 | Weights or tokenizer fail to load | `ModelLoadError` | 503 |
 | Generation fails | `GenerationError` | 500 |
+| Corrupt stored data on read | `CorruptStoredDataError` | 500 |
 | Unknown evaluation metric (from arc-eval) | `UnknownMetricError` | 404 |
 | Success | | 201 |
 

@@ -9,12 +9,13 @@ from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from arc_model_lab.domain import (
+    CorruptStoredDataError,
+    DeployedModelUnavailableError,
     ExperimentNameConflictError,
     ExperimentNotFoundError,
     GenerationError,
     InputTooLargeError,
     InvalidGenerationConfigError,
-    ModelInactiveError,
     ModelLoadError,
     ModelNotFoundError,
     UnknownMetricError,
@@ -35,8 +36,12 @@ async def _unknown_metric(request: Request, exc: Exception) -> Response:
     return _error(status.HTTP_404_NOT_FOUND, str(exc) or "Requested metric does not exist")
 
 
-async def _model_inactive(request: Request, exc: Exception) -> Response:
-    return _error(status.HTTP_409_CONFLICT, str(exc) or "Model is not active")
+async def _deployed_model_unavailable(request: Request, exc: Exception) -> Response:
+    # The caller does not choose the deployed model, so a missing or inactive one
+    # is an operator misconfiguration, not a client error: log the specific cause
+    # and return a generic 503.
+    logger.error("Deployed model unavailable", exc_info=exc)
+    return _error(status.HTTP_503_SERVICE_UNAVAILABLE, "Model is temporarily unavailable")
 
 
 async def _experiment_not_found(request: Request, exc: Exception) -> Response:
@@ -49,6 +54,13 @@ async def _experiment_name_conflict(request: Request, exc: Exception) -> Respons
 
 async def _invalid_generation_config(request: Request, exc: Exception) -> Response:
     return _error(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc) or "Invalid generation config")
+
+
+async def _corrupt_stored_data(request: Request, exc: Exception) -> Response:
+    # Persisted data failed to load: a server-side integrity fault, not a client
+    # error. Log the specific cause; the client gets a generic 500.
+    logger.error("Corrupt stored data", exc_info=exc)
+    return _error(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
 
 
 async def _input_too_large(request: Request, exc: Exception) -> Response:
@@ -91,10 +103,11 @@ async def _unhandled(request: Request, exc: Exception) -> Response:
 
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ModelNotFoundError, _model_not_found)
-    app.add_exception_handler(ModelInactiveError, _model_inactive)
+    app.add_exception_handler(DeployedModelUnavailableError, _deployed_model_unavailable)
     app.add_exception_handler(ExperimentNotFoundError, _experiment_not_found)
     app.add_exception_handler(ExperimentNameConflictError, _experiment_name_conflict)
     app.add_exception_handler(InvalidGenerationConfigError, _invalid_generation_config)
+    app.add_exception_handler(CorruptStoredDataError, _corrupt_stored_data)
     app.add_exception_handler(InputTooLargeError, _input_too_large)
     app.add_exception_handler(ModelLoadError, _model_load_error)
     app.add_exception_handler(GenerationError, _generation_error)

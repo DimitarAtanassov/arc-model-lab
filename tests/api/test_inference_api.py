@@ -37,3 +37,10 @@ def test_generation_failure_returns_500(failing_client: TestClient) -> None:
 def test_model_load_failure_returns_503(model_load_failing_client: TestClient) -> None:
     response = model_load_failing_client.post("/inference", json={"input_text": "hi"})
     assert response.status_code == 503
+
+
+def test_unavailable_deployed_model_returns_503(unavailable_model_client: TestClient) -> None:
+    # A missing or inactive deployed model is an operator misconfiguration, not a
+    # client error: the blameless caller gets 503, never 404/409.
+    response = unavailable_model_client.post("/inference", json={"input_text": "hi"})
+    assert response.status_code == 503

@@ -19,14 +19,13 @@ from sqlalchemy.orm import Session
 from arc_model_lab.db.repositories import ExperimentRepository, ModelRepository
 from arc_model_lab.domain import (
     Experiment,
-    ExperimentMetricAggregate,
-    ExperimentNameConflictError,
     ExperimentNotFoundError,
+    ExperimentResults,
     Model,
     ModelNotFoundError,
 )
-from arc_model_lab.services.inference_service import RunContext
 from arc_model_lab.services.inference_workflow import InferenceResult, InferenceWorkflow
+from arc_model_lab.services.run_context import RunContext
 
 
 class ExperimentService:
@@ -36,16 +35,24 @@ class ExperimentService:
         self._workflow = workflow
 
     def create(self, session: Session, experiment: Experiment) -> Experiment:
+        # The unique name constraint is the single guard: ExperimentRepository.add
+        # raises ExperimentNameConflictError on a duplicate, so a pre-check query is
+        # redundant (and would not close the concurrent-create race anyway).
         self._require_model(session, experiment.model_id)
-        repository = ExperimentRepository(session)
-        if repository.get_by_name(experiment.name) is not None:
-            raise ExperimentNameConflictError(f"Experiment name already exists: {experiment.name}")
-        saved = repository.add(experiment)
+        saved = ExperimentRepository(session).add(experiment)
         session.commit()
         return saved
 
-    def get(self, session: Session, experiment_id: UUID) -> Experiment | None:
-        return ExperimentRepository(session).get(experiment_id)
+    def get(self, session: Session, experiment_id: UUID) -> Experiment:
+        """Return the experiment or raise :class:`ExperimentNotFoundError` (404).
+
+        Existence checks live here so routes and other methods share one lookup and
+        stay free of transport-level status decisions.
+        """
+        experiment = ExperimentRepository(session).get(experiment_id)
+        if experiment is None:
+            raise ExperimentNotFoundError(f"Experiment not found: {experiment_id}")
+        return experiment
 
     def run(
         self,
@@ -60,9 +67,7 @@ class ExperimentService:
         Raises :class:`ExperimentNotFoundError` for an unknown experiment and
         :class:`ModelNotFoundError` if its model has since been removed.
         """
-        experiment = ExperimentRepository(session).get(experiment_id)
-        if experiment is None:
-            raise ExperimentNotFoundError(f"Experiment not found: {experiment_id}")
+        experiment = self.get(session, experiment_id)
         model = self._require_model(session, experiment.model_id)
         return self._workflow.run(
             session,
@@ -75,32 +80,29 @@ class ExperimentService:
             metrics=metrics,
         )
 
-    def results(self, session: Session, experiment_id: UUID) -> list[ExperimentMetricAggregate]:
-        self._require_experiment(session, experiment_id)
-        return ExperimentRepository(session).aggregate_scores(experiment_id)
+    def results(self, session: Session, experiment_id: UUID) -> ExperimentResults:
+        self.get(session, experiment_id)
+        aggregates = ExperimentRepository(session).aggregate_scores(experiment_id)
+        return ExperimentResults(experiment_id=experiment_id, metrics=aggregates)
 
     def compare(
         self,
         session: Session,
         experiment_id_a: UUID,
         experiment_id_b: UUID,
-    ) -> dict[UUID, list[ExperimentMetricAggregate]]:
-        self._require_experiment(session, experiment_id_a)
-        self._require_experiment(session, experiment_id_b)
-        repository = ExperimentRepository(session)
-        return {
-            experiment_id_a: repository.aggregate_scores(experiment_id_a),
-            experiment_id_b: repository.aggregate_scores(experiment_id_b),
-        }
+    ) -> list[ExperimentResults]:
+        """Aggregate scores for both experiments, preserving order and identity.
+
+        Returns a list, not a map: comparing an experiment with itself yields two
+        entries rather than silently collapsing to one.
+        """
+        return [
+            self.results(session, experiment_id_a),
+            self.results(session, experiment_id_b),
+        ]
 
     def _require_model(self, session: Session, model_id: UUID) -> Model:
         model = ModelRepository(session).get_by_id(model_id)
         if model is None:
             raise ModelNotFoundError(f"Model not found: {model_id}")
         return model
-
-    def _require_experiment(self, session: Session, experiment_id: UUID) -> Experiment:
-        experiment = ExperimentRepository(session).get(experiment_id)
-        if experiment is None:
-            raise ExperimentNotFoundError(f"Experiment not found: {experiment_id}")
-        return experiment
