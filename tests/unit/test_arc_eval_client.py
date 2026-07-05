@@ -37,10 +37,10 @@ def _client(handler: Callable[[httpx.Request], httpx.Response]) -> ArcEvalClient
 
 def _request() -> EvalRequest:
     return EvalRequest(
-        task_type="summarization",
         input_text="source",
         output_text="summary",
         prompt="rendered",
+        metrics=["faithfulness"],
         metadata=EvalMetadata(inference_id="i-1", model_id="m-1"),
     )
 
@@ -59,11 +59,10 @@ def test_evaluate_posts_to_v1_evaluate_and_parses_results() -> None:
     assert captured["method"] == "POST"
     assert str(captured["url"]).endswith("/v1/evaluate")
     assert captured["json"] == {  # type: ignore[comparison-overlap]
-        "task_type": "summarization",
         "input_text": "source",
         "output_text": "summary",
         "prompt": "rendered",
-        "metrics": None,
+        "metrics": ["faithfulness"],
         "metadata": {"inference_id": "i-1", "model_id": "m-1"},
     }
     assert len(response.results) == 1

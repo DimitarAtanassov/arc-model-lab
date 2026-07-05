@@ -7,24 +7,28 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arc_model_lab.api.schemas.evaluations import EvaluationEnvelope
-from arc_model_lab.domain import EvaluationOutcome, Inference
+from arc_model_lab.domain import GenerationConfig, Inference
+from arc_model_lab.domain.generation import DEFAULT_TEMPERATURE
 
 
 class InferenceRequest(BaseModel):
-    # The caller does not choose the model: every request runs on the deployed
-    # model. ``extra="forbid"`` rejects a stale ``model_name`` with 422 rather
-    # than silently ignoring it.
-    model_config = ConfigDict(extra="forbid")
+    # The caller names the model and the sampling temperature. ``extra="forbid"``
+    # rejects an unknown field (including ``max_output_tokens``, a server default
+    # here) with 422 rather than silently ignoring it.
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
+    model_name: str = Field(min_length=1, description="Catalog model to run.")
     input_text: str = Field(min_length=1, description="Text to summarize.")
-    metrics: list[str] | None = Field(
-        default=None,
-        description=(
-            "Metrics to evaluate the output against. When omitted, the output is "
-            "not evaluated. An unknown metric name is rejected with 404."
-        ),
+    temperature: float = Field(
+        default=DEFAULT_TEMPERATURE,
+        ge=0.0,
+        le=2.0,
+        description="Sampling temperature: 0 is greedy/deterministic, higher is more random.",
     )
+
+    def to_config(self) -> GenerationConfig:
+        # max_output_tokens is not caller-controlled on /inference; use the default.
+        return GenerationConfig(temperature=self.temperature)
 
 
 class InferenceResponse(BaseModel):
@@ -38,19 +42,13 @@ class InferenceResponse(BaseModel):
     latency_ms: int
     prompt_tokens: int | None
     completion_tokens: int | None
-    experiment_id: UUID | None = None
     created_at: datetime
-    evaluation: EvaluationEnvelope | None = None
 
     @classmethod
-    def from_inference(cls, inference: Inference, evaluation: EvaluationOutcome | None = None) -> InferenceResponse:
-        """Assemble the response from a persisted inference and its optional scores.
+    def from_inference(cls, inference: Inference) -> InferenceResponse:
+        """Shape the pure-inference response.
 
-        One factory builds this shape for both ``/inference`` and experiment runs,
-        so the two transports cannot drift. The evaluation envelope is attached via
-        an immutable copy rather than a post-validation field mutation.
+        No experiment id and no evaluation: ``/inference`` neither runs under an
+        experiment nor scores its output. Those belong to the experiment flow.
         """
-        response = cls.model_validate(inference)
-        if evaluation is None:
-            return response
-        return response.model_copy(update={"evaluation": EvaluationEnvelope.from_outcome(evaluation)})
+        return cls.model_validate(inference)

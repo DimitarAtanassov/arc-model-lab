@@ -55,23 +55,23 @@ def test_evaluation_service_builds_service_when_client_is_available(monkeypatch:
 
 
 def test_main_dispatches_run_command(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[UUID] = []
+    calls: list[tuple[UUID, list[str]]] = []
 
-    def _capture_run(inference_id: UUID) -> None:
-        calls.append(inference_id)
+    def _capture_run(inference_id: UUID, metrics: list[str]) -> None:
+        calls.append((inference_id, metrics))
 
     monkeypatch.setattr(cli, "_run", _capture_run)
 
     cli.main(["run", "--inference-id", "123e4567-e89b-12d3-a456-426614174000"])
 
-    assert calls == [UUID("123e4567-e89b-12d3-a456-426614174000")]
+    assert calls == [(UUID("123e4567-e89b-12d3-a456-426614174000"), ["faithfulness", "answer_relevance"])]
 
 
 def test_main_dispatches_replay_and_backfill(monkeypatch: pytest.MonkeyPatch) -> None:
     replay_calls: list[tuple[object, object, int]] = []
     backfill_calls: list[tuple[object, object, int]] = []
 
-    def _capture_replay(*, created_after: object, created_before: object, limit: int) -> None:
+    def _capture_replay(*, created_after: object, created_before: object, limit: int, metrics: list[str]) -> None:
         replay_calls.append((created_after, created_before, limit))
 
     monkeypatch.setattr(cli, "_process_batch", _capture_replay)
@@ -79,7 +79,7 @@ def test_main_dispatches_replay_and_backfill(monkeypatch: pytest.MonkeyPatch) ->
     cli.main(["replay", "--limit", "7"])
     assert replay_calls == [(None, None, 7)]
 
-    def _capture_backfill(*, created_after: object, created_before: object, limit: int) -> None:
+    def _capture_backfill(*, created_after: object, created_before: object, limit: int, metrics: list[str]) -> None:
         backfill_calls.append((created_after, created_before, limit))
 
     monkeypatch.setattr(cli, "_process_batch", _capture_backfill)
@@ -116,7 +116,7 @@ def test_run_exits_when_inference_is_missing(monkeypatch: pytest.MonkeyPatch) ->
             return None
 
     class _FakeService:
-        def evaluate_inference(self, session: object, inference: object) -> object:
+        def evaluate_inference(self, session: object, inference: object, metrics: object) -> object:
             raise AssertionError("should not be called")
 
     monkeypatch.setattr(cli, "_evaluation_service", _FakeService)
@@ -124,7 +124,7 @@ def test_run_exits_when_inference_is_missing(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(cli, "InferenceRepository", _FakeInferenceRepository)
 
     with pytest.raises(SystemExit, match="Inference not found"):
-        cli._run(UUID("123e4567-e89b-12d3-a456-426614174000"))
+        cli._run(UUID("123e4567-e89b-12d3-a456-426614174000"), ["faithfulness"])
 
 
 def test_run_prints_outcome_and_exits_on_failed_result(
@@ -157,7 +157,7 @@ def test_run_prints_outcome_and_exits_on_failed_result(
             return {"id": inference_id}
 
     class _FakeService:
-        def evaluate_inference(self, session: object, inference: object) -> object:
+        def evaluate_inference(self, session: object, inference: object, metrics: object) -> object:
             return type("Outcome", (), {"status": EvaluationStatus.FAILED, "results": ()})()
 
     monkeypatch.setattr(cli, "_evaluation_service", _FakeService)
@@ -165,7 +165,7 @@ def test_run_prints_outcome_and_exits_on_failed_result(
     monkeypatch.setattr(cli, "InferenceRepository", _FakeInferenceRepository)
 
     with pytest.raises(SystemExit, match="1"):
-        cli._run(UUID("123e4567-e89b-12d3-a456-426614174000"))
+        cli._run(UUID("123e4567-e89b-12d3-a456-426614174000"), ["faithfulness"])
 
     out = capsys.readouterr().out
     assert "123e4567-e89b-12d3-a456-426614174000" in out
@@ -202,14 +202,14 @@ def test_run_prints_outcome_without_exiting_for_completed_result(
             return {"id": inference_id}
 
     class _FakeService:
-        def evaluate_inference(self, session: object, inference: object) -> object:
+        def evaluate_inference(self, session: object, inference: object, metrics: object) -> object:
             return type("Outcome", (), {"status": EvaluationStatus.COMPLETED, "results": ()})()
 
     monkeypatch.setattr(cli, "_evaluation_service", _FakeService)
     monkeypatch.setattr(cli, "_session_factory", _FakeSessionFactory)
     monkeypatch.setattr(cli, "InferenceRepository", _FakeInferenceRepository)
 
-    cli._run(UUID("123e4567-e89b-12d3-a456-426614174000"))
+    cli._run(UUID("123e4567-e89b-12d3-a456-426614174000"), ["faithfulness"])
 
     out = capsys.readouterr().out
     assert "123e4567-e89b-12d3-a456-426614174000" in out
@@ -247,14 +247,14 @@ def test_process_batch_completes_without_exiting_when_all_succeed(
             return [_FakeInference(UUID("123e4567-e89b-12d3-a456-426614174000"))]
 
     class _FakeService:
-        def evaluate_inference(self, session: object, inference: object) -> object:
+        def evaluate_inference(self, session: object, inference: object, metrics: object) -> object:
             return type("Outcome", (), {"status": EvaluationStatus.COMPLETED, "results": ()})()
 
     monkeypatch.setattr(cli, "_evaluation_service", _FakeService)
     monkeypatch.setattr(cli, "_session_factory", _FakeSessionFactory)
     monkeypatch.setattr(cli, "InferenceRepository", _FakeInferenceRepository)
 
-    cli._process_batch(created_after=None, created_before=None, limit=5)
+    cli._process_batch(created_after=None, created_before=None, limit=5, metrics=["faithfulness"])
 
     out = capsys.readouterr().out
     assert "processed=1" in out
@@ -296,7 +296,7 @@ def test_process_batch_reports_completed_and_failed(
             ]
 
     class _FakeService:
-        def evaluate_inference(self, session: object, inference: object) -> object:
+        def evaluate_inference(self, session: object, inference: object, metrics: object) -> object:
             status = (
                 EvaluationStatus.FAILED
                 if inference.id == UUID("123e4567-e89b-12d3-a456-426614174001")
@@ -309,7 +309,7 @@ def test_process_batch_reports_completed_and_failed(
     monkeypatch.setattr(cli, "InferenceRepository", _FakeInferenceRepository)
 
     with pytest.raises(SystemExit, match="1"):
-        cli._process_batch(created_after=None, created_before=None, limit=5)
+        cli._process_batch(created_after=None, created_before=None, limit=5, metrics=["faithfulness"])
 
     out = capsys.readouterr().out
     assert "processed=2" in out

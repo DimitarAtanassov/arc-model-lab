@@ -1,9 +1,10 @@
 """Request/response contracts for the experiments endpoints.
 
-The run endpoint reuses :class:`InferenceResponse` because an experiment run
-produces exactly one inference (and optional scores), the same shape as
-``/inference``. ``GenerationConfigSchema`` forbids unknown keys, so a knob the
-runtime ignores (for example ``temperature``) is rejected with 422 at the
+The run endpoint has its own response (:class:`ExperimentRunResponse`): a run
+produces one inference tagged with the experiment id and, when the run names
+metrics, its evaluation. ``/inference`` returns neither, which keeps the two
+endpoints orthogonal. ``GenerationConfigSchema`` forbids unknown keys, so a knob
+the runtime ignores (for example ``num_beams``) is rejected with 422 at the
 boundary rather than silently dropped.
 """
 
@@ -14,39 +15,38 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc_model_lab.api.schemas.evaluations import EvaluationEnvelope
 from arc_model_lab.domain import (
+    EvaluationOutcome,
     Experiment,
     ExperimentMetricAggregate,
     ExperimentResults,
     GenerationConfig,
+    Inference,
 )
 from arc_model_lab.domain.generation import (
-    DEFAULT_MAX_INPUT_TOKENS,
-    DEFAULT_MAX_NEW_TOKENS,
-    DEFAULT_NUM_BEAMS,
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    DEFAULT_TEMPERATURE,
 )
 
 
 class GenerationConfigSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    max_input_tokens: int = Field(default=DEFAULT_MAX_INPUT_TOKENS, ge=1)
-    max_new_tokens: int = Field(default=DEFAULT_MAX_NEW_TOKENS, ge=1)
-    num_beams: int = Field(default=DEFAULT_NUM_BEAMS, ge=1)
+    temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0)
+    max_output_tokens: int = Field(default=DEFAULT_MAX_OUTPUT_TOKENS, ge=1)
 
     def to_domain(self) -> GenerationConfig:
         return GenerationConfig(
-            max_input_tokens=self.max_input_tokens,
-            max_new_tokens=self.max_new_tokens,
-            num_beams=self.num_beams,
+            temperature=self.temperature,
+            max_output_tokens=self.max_output_tokens,
         )
 
     @classmethod
     def from_domain(cls, config: GenerationConfig) -> GenerationConfigSchema:
         return cls(
-            max_input_tokens=config.max_input_tokens,
-            max_new_tokens=config.max_new_tokens,
-            num_beams=config.num_beams,
+            temperature=config.temperature,
+            max_output_tokens=config.max_output_tokens,
         )
 
 
@@ -55,21 +55,8 @@ class ExperimentCreateRequest(BaseModel):
 
     name: str = Field(min_length=1, description="Unique experiment name.")
     description: str | None = None
-    model_id: UUID = Field(description="Catalog model to run under this experiment.")
+    model_name: str = Field(min_length=1, description="Catalog model to run under this experiment.")
     generation_config: GenerationConfigSchema = Field(default_factory=GenerationConfigSchema)
-    created_by: str | None = Field(
-        default=None,
-        description="Optional caller-supplied label; not authenticated, so not a trustworthy attribution.",
-    )
-
-    def to_domain(self) -> Experiment:
-        return Experiment(
-            name=self.name,
-            model_id=self.model_id,
-            generation_config=self.generation_config.to_domain(),
-            description=self.description,
-            created_by=self.created_by,
-        )
 
 
 class ExperimentResponse(BaseModel):
@@ -78,22 +65,20 @@ class ExperimentResponse(BaseModel):
     id: UUID  # noqa: A003 - mirrors the domain primary key
     name: str
     description: str | None
-    model_id: UUID
+    model_name: str
     prompt_version_id: UUID | None
     generation_config: GenerationConfigSchema
-    created_by: str | None
     created_at: datetime
 
     @classmethod
-    def from_domain(cls, experiment: Experiment) -> ExperimentResponse:
+    def from_domain(cls, experiment: Experiment, model_name: str) -> ExperimentResponse:
         return cls(
             id=experiment.id,
             name=experiment.name,
             description=experiment.description,
-            model_id=experiment.model_id,
+            model_name=model_name,
             prompt_version_id=experiment.prompt_version_id,
             generation_config=GenerationConfigSchema.from_domain(experiment.generation_config),
-            created_by=experiment.created_by,
             created_at=experiment.created_at,
         )
 
@@ -103,6 +88,34 @@ class ExperimentRunRequest(BaseModel):
 
     input_text: str = Field(min_length=1, description="Text to summarize under the experiment.")
     metrics: list[str] | None = Field(default=None, description="Metrics to score the output against.")
+
+
+class ExperimentRunResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=(), from_attributes=True)
+
+    id: UUID  # noqa: A003 - mirrors the domain primary key
+    model_id: UUID
+    input_text: str
+    prompt: str
+    output_text: str
+    latency_ms: int
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    experiment_id: UUID | None
+    created_at: datetime
+    evaluation: EvaluationEnvelope | None = None
+
+    @classmethod
+    def from_inference(cls, inference: Inference, evaluation: EvaluationOutcome | None = None) -> ExperimentRunResponse:
+        """Shape an experiment run: the tagged inference and its optional scores.
+
+        Unlike ``/inference``, this response carries the ``experiment_id`` and the
+        evaluation, because a run always executes under an experiment.
+        """
+        response = cls.model_validate(inference)
+        if evaluation is None:
+            return response
+        return response.model_copy(update={"evaluation": EvaluationEnvelope.from_outcome(evaluation)})
 
 
 class MetricAggregateOut(BaseModel):

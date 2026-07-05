@@ -23,7 +23,6 @@ class Experiment:
     generation_config: GenerationConfig
     description: str | None = None
     prompt_version_id: UUID | None = None  # reserved for phase 03; nullable now
-    created_by: str | None = None
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 

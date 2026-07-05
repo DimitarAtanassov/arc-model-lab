@@ -1,19 +1,20 @@
-"""Inference workflow: build chat messages, run the model, persist the result."""
+"""Inference execution: build chat messages, run the model, persist the result."""
 
 from __future__ import annotations
+
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from arc_model_lab.db.repositories import InferenceRepository, ModelRepository
 from arc_model_lab.domain import (
-    DeployedModelUnavailableError,
+    GenerationConfig,
     Inference,
     InputTooLargeError,
     Model,
-    ModelStatus,
+    ModelNotFoundError,
 )
 from arc_model_lab.services.model_service import ChatMessage, ModelService
-from arc_model_lab.services.run_context import RunContext
 
 # Reject oversized payloads before they reach the tokenizer.
 _MAX_INPUT_CHARS = 50_000
@@ -32,28 +33,52 @@ def build_summary_messages(input_text: str) -> list[ChatMessage]:
 
 
 class InferenceService:
-    """Coordinates a single summarization request end to end.
+    """Runs one summarization request end to end and persists the result.
 
-    By default the model is not chosen by the caller: every ``/inference`` request
-    runs on the deployed model named in configuration, and a missing or inactive
-    deployed model is a server-side misconfiguration
-    (``DeployedModelUnavailableError`` -> 503). Experiments instead pass an
-    explicit ``model`` and ``config`` and tag the row with an ``experiment_id``.
-    The commit happens here so a row is persisted before any success response.
+    The caller names the model: ``/inference`` passes a ``model_name`` that this
+    service resolves against the catalog (a missing name is ``ModelNotFoundError``
+    -> 404). Experiments instead pass an already-resolved model, their generation
+    config, and the experiment id to tag the row. The commit happens here so a row
+    is persisted before any success response.
     """
 
-    def __init__(self, model_service: ModelService, deployed_model_name: str) -> None:
+    def __init__(self, model_service: ModelService) -> None:
         self._model_service = model_service
-        self._deployed_model_name = deployed_model_name
 
-    def summarize(self, session: Session, input_text: str, context: RunContext | None = None) -> Inference:
+    def summarize(self, session: Session, *, model_name: str, input_text: str, config: GenerationConfig) -> Inference:
+        """Resolve the named model and run one summarization for ``/inference``.
+
+        Raises :class:`ModelNotFoundError` (404) when no catalog model has that
+        name, and :class:`InputTooLargeError` (413) for an oversized payload.
+        """
+        model = self._resolve_model(session, model_name)
+        return self._generate_and_store(session, model=model, input_text=input_text, config=config, experiment_id=None)
+
+    def run_for_experiment(
+        self,
+        session: Session,
+        *,
+        model: Model,
+        input_text: str,
+        config: GenerationConfig,
+        experiment_id: UUID,
+    ) -> Inference:
+        """Run one summarization for an experiment, tagging the row with its id."""
+        return self._generate_and_store(
+            session, model=model, input_text=input_text, config=config, experiment_id=experiment_id
+        )
+
+    def _generate_and_store(
+        self,
+        session: Session,
+        *,
+        model: Model,
+        input_text: str,
+        config: GenerationConfig,
+        experiment_id: UUID | None,
+    ) -> Inference:
         if len(input_text) > _MAX_INPUT_CHARS:
             raise InputTooLargeError(f"Input exceeds {_MAX_INPUT_CHARS} characters")
-
-        if context is None:
-            model, config, experiment_id = self._resolve_deployed_model(session), None, None
-        else:
-            model, config, experiment_id = context.model, context.config, context.experiment_id
 
         messages = build_summary_messages(input_text)
         result = self._model_service.generate(model, messages, config)
@@ -72,10 +97,8 @@ class InferenceService:
         session.commit()
         return persisted
 
-    def _resolve_deployed_model(self, session: Session) -> Model:
-        model = ModelRepository(session).get_by_name(self._deployed_model_name)
+    def _resolve_model(self, session: Session, model_name: str) -> Model:
+        model = ModelRepository(session).get_by_name(model_name)
         if model is None:
-            raise DeployedModelUnavailableError(f"Deployed model not found: {self._deployed_model_name}")
-        if model.status != ModelStatus.ACTIVE:
-            raise DeployedModelUnavailableError(f"Deployed model is not active: {self._deployed_model_name}")
+            raise ModelNotFoundError(f"Model not found: {model_name}")
         return model

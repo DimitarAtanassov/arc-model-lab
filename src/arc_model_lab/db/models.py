@@ -106,6 +106,5 @@ class ExperimentRecord(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_id: Mapped[UUID] = mapped_column(ForeignKey("models.id", ondelete="RESTRICT"))
     prompt_version_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
-    generation_config: Mapped[dict[str, int]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
-    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    generation_config: Mapped[dict[str, float | int]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

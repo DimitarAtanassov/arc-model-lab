@@ -26,6 +26,8 @@ from arc_model_lab.domain import EvaluationOutcome, EvaluationStatus
 from arc_model_lab.services.evaluation_service import EvaluationService
 
 _DEFAULT_LIMIT = 100
+# The summarization metric set; callers override it with --metrics.
+_DEFAULT_METRICS = ("faithfulness", "answer_relevance")
 
 
 def _session_factory() -> sessionmaker[Session]:
@@ -51,13 +53,13 @@ def _print_outcome(inference_id: UUID, outcome: EvaluationOutcome) -> None:
     print(f"{inference_id}\t{outcome.status}\t{scores}")
 
 
-def _run(inference_id: UUID) -> None:
+def _run(inference_id: UUID, metrics: list[str]) -> None:
     service = _evaluation_service()
     with _session_factory()() as session:
         inference = InferenceRepository(session).get(inference_id)
         if inference is None:
             raise SystemExit(f"Inference not found: {inference_id}")
-        outcome = service.evaluate_inference(session, inference)
+        outcome = service.evaluate_inference(session, inference, metrics)
     _print_outcome(inference_id, outcome)
     if outcome.status is EvaluationStatus.FAILED:
         raise SystemExit(1)
@@ -68,6 +70,7 @@ def _process_batch(
     created_after: datetime | None,
     created_before: datetime | None,
     limit: int,
+    metrics: list[str],
 ) -> None:
     service = _evaluation_service()
     completed = 0
@@ -77,7 +80,7 @@ def _process_batch(
             limit=limit, created_after=created_after, created_before=created_before
         )
         for inference in pending:
-            outcome = service.evaluate_inference(session, inference)
+            outcome = service.evaluate_inference(session, inference, metrics)
             _print_outcome(inference.id, outcome)
             if outcome.status is EvaluationStatus.COMPLETED:
                 completed += 1
@@ -94,23 +97,26 @@ def main(argv: list[str] | None = None) -> None:
 
     run_parser = sub.add_parser("run", help="Evaluate a single inference by id")
     run_parser.add_argument("--inference-id", required=True, type=UUID)
+    run_parser.add_argument("--metrics", nargs="+", default=list(_DEFAULT_METRICS))
 
     replay_parser = sub.add_parser("replay", help="Evaluate unevaluated inferences")
     replay_parser.add_argument("--limit", type=int, default=_DEFAULT_LIMIT)
+    replay_parser.add_argument("--metrics", nargs="+", default=list(_DEFAULT_METRICS))
 
     backfill_parser = sub.add_parser("backfill", help="Evaluate unevaluated inferences in a time range")
     backfill_parser.add_argument("--since", type=_parse_timestamp, default=None)
     backfill_parser.add_argument("--until", type=_parse_timestamp, default=None)
     backfill_parser.add_argument("--limit", type=int, default=_DEFAULT_LIMIT)
+    backfill_parser.add_argument("--metrics", nargs="+", default=list(_DEFAULT_METRICS))
 
     args = parser.parse_args(argv)
 
     if args.command == "run":
-        _run(args.inference_id)
+        _run(args.inference_id, args.metrics)
     elif args.command == "replay":
-        _process_batch(created_after=None, created_before=None, limit=args.limit)
+        _process_batch(created_after=None, created_before=None, limit=args.limit, metrics=args.metrics)
     elif args.command == "backfill":  # pragma: no branch - argparse restricts the command set
-        _process_batch(created_after=args.since, created_before=args.until, limit=args.limit)
+        _process_batch(created_after=args.since, created_before=args.until, limit=args.limit, metrics=args.metrics)
 
 
 if __name__ == "__main__":

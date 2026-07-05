@@ -1,8 +1,8 @@
-"""Generation configuration: the deterministic decoding knobs a run may vary.
+"""Generation configuration: the decoding knobs a run may vary.
 
-The runtime is deterministic (greedy or beam search, no sampling), so these are
-the only parameters an experiment can change. Holding them in a typed value
-object means an experiment cannot request a knob the runtime ignores: unknown
+A run varies two parameters: ``temperature`` (0 is greedy and deterministic,
+above 0 enables sampling) and ``max_output_tokens``. Holding them in a typed
+value object means a caller cannot request a knob the runtime ignores: unknown
 keys are rejected by :meth:`GenerationConfig.from_mapping`, and out-of-range
 values are rejected at construction by ``__post_init__``.
 
@@ -18,35 +18,32 @@ from typing import Any
 
 from arc_model_lab.domain.exceptions import InvalidGenerationConfigError
 
-DEFAULT_MAX_INPUT_TOKENS = 1024
-DEFAULT_MAX_NEW_TOKENS = 256
-# Greedy decoding: the deterministic, reproducible baseline for experiments. The
-# deployed model may decode differently (see ``Settings.num_beams``); an experiment
-# opts into that by setting ``num_beams`` explicitly.
-DEFAULT_NUM_BEAMS = 1
+DEFAULT_TEMPERATURE = 0.0
+DEFAULT_MAX_OUTPUT_TOKENS = 256
+# The largest temperature a caller may request. Above this, sampling degenerates
+# into noise for the instruct models this service runs.
+MAX_TEMPERATURE = 2.0
 
-_FIELDS = ("max_input_tokens", "max_new_tokens", "num_beams")
+_FIELDS = ("temperature", "max_output_tokens")
 
 
 @dataclass(frozen=True, slots=True)
 class GenerationConfig:
-    """The deterministic decoding parameters for one generation.
+    """The decoding parameters for one generation.
 
-    Defaults are greedy decoding: a reproducible experiment baseline, independent
-    of the deployed model's own decoding. Validation runs in ``__post_init__`` so
-    no construction path (HTTP schema, CLI, or storage) can build an out-of-range
-    config.
+    The default is greedy decoding (``temperature`` 0): a reproducible baseline.
+    Validation runs in ``__post_init__`` so no construction path (HTTP schema,
+    CLI, or storage) can build an out-of-range config.
     """
 
-    max_input_tokens: int = DEFAULT_MAX_INPUT_TOKENS
-    max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS
-    num_beams: int = DEFAULT_NUM_BEAMS
+    temperature: float = DEFAULT_TEMPERATURE
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
 
     def __post_init__(self) -> None:
-        for name in _FIELDS:
-            _positive_int(name, getattr(self, name))
+        _temperature(self.temperature)
+        _positive_int("max_output_tokens", self.max_output_tokens)
 
-    def to_dict(self) -> dict[str, int]:
+    def to_dict(self) -> dict[str, float | int]:
         return asdict(self)
 
     @classmethod
@@ -73,3 +70,14 @@ def _positive_int(name: str, value: object) -> int:
     if value < 1:
         raise InvalidGenerationConfigError(f"{name} must be >= 1")
     return value
+
+
+def _temperature(value: object) -> float:
+    # bool is an int subclass; reject it so temperature=True cannot slip through.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidGenerationConfigError("temperature must be a number")
+    if value < 0:
+        raise InvalidGenerationConfigError("temperature must be >= 0")
+    if value > MAX_TEMPERATURE:
+        raise InvalidGenerationConfigError(f"temperature must be <= {MAX_TEMPERATURE}")
+    return float(value)

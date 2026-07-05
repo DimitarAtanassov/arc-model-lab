@@ -42,7 +42,7 @@ def _experiment() -> Experiment:
     return Experiment(
         name="exp",
         model_id=uuid4(),
-        generation_config=GenerationConfig(max_input_tokens=1024, max_new_tokens=256, num_beams=1),
+        generation_config=GenerationConfig(temperature=0.0, max_output_tokens=256),
     )
 
 

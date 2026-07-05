@@ -10,7 +10,6 @@ from fastapi.responses import JSONResponse
 
 from arc_model_lab.domain import (
     CorruptStoredDataError,
-    DeployedModelUnavailableError,
     ExperimentNameConflictError,
     ExperimentNotFoundError,
     GenerationError,
@@ -34,14 +33,6 @@ async def _model_not_found(request: Request, exc: Exception) -> Response:
 
 async def _unknown_metric(request: Request, exc: Exception) -> Response:
     return _error(status.HTTP_404_NOT_FOUND, str(exc) or "Requested metric does not exist")
-
-
-async def _deployed_model_unavailable(request: Request, exc: Exception) -> Response:
-    # The caller does not choose the deployed model, so a missing or inactive one
-    # is an operator misconfiguration, not a client error: log the specific cause
-    # and return a generic 503.
-    logger.error("Deployed model unavailable", exc_info=exc)
-    return _error(status.HTTP_503_SERVICE_UNAVAILABLE, "Model is temporarily unavailable")
 
 
 async def _experiment_not_found(request: Request, exc: Exception) -> Response:
@@ -103,7 +94,6 @@ async def _unhandled(request: Request, exc: Exception) -> Response:
 
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ModelNotFoundError, _model_not_found)
-    app.add_exception_handler(DeployedModelUnavailableError, _deployed_model_unavailable)
     app.add_exception_handler(ExperimentNotFoundError, _experiment_not_found)
     app.add_exception_handler(ExperimentNameConflictError, _experiment_name_conflict)
     app.add_exception_handler(InvalidGenerationConfigError, _invalid_generation_config)

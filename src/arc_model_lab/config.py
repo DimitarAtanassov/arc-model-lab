@@ -34,10 +34,10 @@ class Settings(BaseSettings):
     # too large for the MPS 4 GiB per-tensor limit, which aborts the process otherwise.
     device: Device = "cpu"
 
-    # Generation parameters
+    # Generation parameters. temperature 0 = greedy/deterministic; > 0 enables sampling.
     max_input_tokens: int = 1024
-    max_new_tokens: int = 256
-    num_beams: int = 4
+    max_output_tokens: int = 256
+    temperature: float = 0.0
 
     # HTTP server
     api_host: str = "0.0.0.0"  # noqa: S104 — bind all interfaces for containerized serving

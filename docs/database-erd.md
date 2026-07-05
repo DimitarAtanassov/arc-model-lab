@@ -4,9 +4,9 @@ Audience: backend engineers working on persistence or migrations. Reading time: 
 
 The service persists three tables in PostgreSQL 16: `models` (the inference model
 catalog), `inference` (one row per executed inference), and `evaluation_results`
-(one metric score per row, written when a request asks for scoring). The schema is
-owned by Alembic migrations in `migrations/` and mirrored by the SQLAlchemy ORM in
-`src/arc_model_lab/db/models.py`.
+(one metric score per row, written when an experiment run asks for scoring). The
+schema is owned by Alembic migrations in `migrations/` and mirrored by the
+SQLAlchemy ORM in `src/arc_model_lab/db/models.py`.
 
 ## Entity relationship diagram
 

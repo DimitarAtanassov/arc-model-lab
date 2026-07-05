@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
@@ -124,16 +124,23 @@ class ModelService:
                 prompt,
                 return_tensors="pt",
                 truncation=True,
-                max_length=resolved.max_input_tokens,
+                max_length=self._settings.max_input_tokens,
             ).to(runtime.device)
             prompt_tokens = int(inputs["input_ids"].shape[1])
+
+            # temperature 0 is greedy and deterministic; above 0 enables sampling.
+            generate_kwargs: dict[str, Any] = {
+                "max_new_tokens": resolved.max_output_tokens,
+                "do_sample": resolved.temperature > 0,
+            }
+            if resolved.temperature > 0:
+                generate_kwargs["temperature"] = resolved.temperature
 
             start = time.perf_counter()
             with torch.no_grad():
                 output_ids = runtime.model.generate(  # type: ignore[operator]
                     **inputs,
-                    max_new_tokens=resolved.max_new_tokens,
-                    num_beams=resolved.num_beams,
+                    **generate_kwargs,
                 )
             latency_ms = int((time.perf_counter() - start) * 1000)
 
@@ -155,7 +162,6 @@ class ModelService:
     def _default_generation_config(self) -> GenerationConfig:
         settings = self._settings
         return GenerationConfig(
-            max_input_tokens=settings.max_input_tokens,
-            max_new_tokens=settings.max_new_tokens,
-            num_beams=settings.num_beams,
+            temperature=settings.temperature,
+            max_output_tokens=settings.max_output_tokens,
         )

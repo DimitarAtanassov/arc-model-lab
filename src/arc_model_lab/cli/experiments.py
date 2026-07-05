@@ -20,22 +20,18 @@ from sqlalchemy.orm import Session, sessionmaker
 from arc_model_lab.clients.arc_eval_client import EvalSettings, build_arc_eval_client
 from arc_model_lab.config import get_settings
 from arc_model_lab.db.base import create_engine_from_url, create_session_factory
-from arc_model_lab.db.repositories import ModelRepository
 from arc_model_lab.domain import (
     DomainError,
-    Experiment,
     ExperimentMetricAggregate,
     GenerationConfig,
 )
 from arc_model_lab.domain.generation import (
-    DEFAULT_MAX_INPUT_TOKENS,
-    DEFAULT_MAX_NEW_TOKENS,
-    DEFAULT_NUM_BEAMS,
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    DEFAULT_TEMPERATURE,
 )
 from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.experiment_service import ExperimentService
 from arc_model_lab.services.inference_service import InferenceService
-from arc_model_lab.services.inference_workflow import InferenceWorkflow
 from arc_model_lab.services.model_service import ModelService
 
 
@@ -62,9 +58,9 @@ def _in_session(operation: Callable[[Session], _T]) -> _T:
 
 def _experiment_service() -> ExperimentService:
     settings = get_settings()
-    inference_service = InferenceService(ModelService(settings), settings.model_name)
+    inference_service = InferenceService(ModelService(settings))
     evaluation_service = EvaluationService(build_arc_eval_client(EvalSettings()))
-    return ExperimentService(InferenceWorkflow(inference_service, evaluation_service))
+    return ExperimentService(inference_service, evaluation_service)
 
 
 def _print_aggregates(experiment_id: UUID, aggregates: list[ExperimentMetricAggregate]) -> None:
@@ -77,15 +73,10 @@ def _print_aggregates(experiment_id: UUID, aggregates: list[ExperimentMetricAggr
 
 def _create(name: str, model_name: str, config: GenerationConfig) -> None:
     service = _experiment_service()
-
-    def operation(session: Session) -> Experiment:
-        model = ModelRepository(session).get_by_name(model_name)
-        if model is None:
-            raise SystemExit(f"Model not found: {model_name}")
-        return service.create(session, Experiment(name=name, model_id=model.id, generation_config=config))
-
-    experiment = _in_session(operation)
-    print(f"{experiment.id}\t{experiment.name}\t{model_name}")
+    view = _in_session(
+        lambda session: service.create(session, name=name, model_name=model_name, generation_config=config)
+    )
+    print(f"{view.experiment.id}\t{view.experiment.name}\t{view.model_name}")
 
 
 def _run(experiment_id: UUID, input_text: str, metrics: list[str] | None) -> None:
@@ -111,9 +102,8 @@ def main(argv: list[str] | None = None) -> None:
     create_parser = sub.add_parser("create", help="Create an experiment")
     create_parser.add_argument("--name", required=True)
     create_parser.add_argument("--model-name", required=True)
-    create_parser.add_argument("--num-beams", type=int, default=DEFAULT_NUM_BEAMS)
-    create_parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
-    create_parser.add_argument("--max-input-tokens", type=int, default=DEFAULT_MAX_INPUT_TOKENS)
+    create_parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
+    create_parser.add_argument("--max-output-tokens", type=int, default=DEFAULT_MAX_OUTPUT_TOKENS)
 
     run_parser = sub.add_parser("run", help="Run an experiment by id")
     run_parser.add_argument("--experiment-id", required=True, type=UUID)
@@ -128,9 +118,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "create":
         config = GenerationConfig(
-            max_input_tokens=args.max_input_tokens,
-            max_new_tokens=args.max_new_tokens,
-            num_beams=args.num_beams,
+            temperature=args.temperature,
+            max_output_tokens=args.max_output_tokens,
         )
         _create(args.name, args.model_name, config)
     elif args.command == "run":

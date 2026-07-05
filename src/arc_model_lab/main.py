@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.session_factory = session_factory
     app.state.eval_settings = eval_settings
     app.state.model_service = model_service
-    app.state.inference_service = InferenceService(model_service, deployed_model_name=settings.model_name)
+    app.state.inference_service = InferenceService(model_service)
     app.state.evaluation_service = EvaluationService(eval_client)
 
     try:

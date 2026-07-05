@@ -67,7 +67,7 @@ class _FakeModel:
     def eval(self) -> _FakeModel:
         return self
 
-    def generate(self, *, input_ids: torch.Tensor, max_new_tokens: int, num_beams: int) -> torch.Tensor:
+    def generate(self, *, input_ids: torch.Tensor, max_new_tokens: int, **kwargs: object) -> torch.Tensor:
         return torch.cat([input_ids, torch.tensor([[4, 5]])], dim=1)
 
 

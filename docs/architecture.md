@@ -5,11 +5,11 @@ Audience: backend engineers extending or operating the service. Reading time: 12
 ## Purpose
 
 `arc-model-lab` takes text, runs a local model, saves the result, and returns it.
-The public surface is one endpoint, `POST /inference`, backed by a small catalog
-of models. A request can also ask for its output to be scored: when it names one
-or more metrics, the service sends the output to `arc-eval` and stores the scores
-against the inference. Inference and scoring are separate steps with separate
-storage, so a scoring problem can never corrupt an inference record.
+The caller names the model and the decoding config on `POST /inference`, which is
+pure inference: it never scores its output. Scoring belongs to experiments, whose
+`run` infers, stores the inference, then sends the output to `arc-eval` when the
+run names metrics. Inference and scoring are separate steps with separate storage,
+so a scoring problem can never corrupt an inference record.
 
 ## Design principles
 
@@ -49,7 +49,7 @@ flowchart LR
     MS --> HF[HuggingFace Transformers]
     Inf --> InfRepo[InferenceRepository]
 
-    API -. "when metrics requested" .-> Eval[EvaluationService]
+    API -. "experiment run, when metrics named" .-> Eval[EvaluationService]
     Eval --> AEC[ArcEvalClient]
     AEC -->|HTTP| ArcEval[arc-eval service]
     Eval --> EvalRepo[EvaluationResultRepository]
@@ -60,10 +60,10 @@ flowchart LR
 ```
 
 `ModelService` keeps an in-process cache of loaded model runtimes and is created
-once at startup. `InferenceService` holds no per-request state and looks up the
-target model from the catalog on each call. `EvaluationService` runs only when a
-request names metrics; it calls `arc-eval` over HTTP after the inference is saved,
-so it never blocks or corrupts the inference result.
+once at startup. `InferenceService` holds no per-request state and resolves the
+model named in each request from the catalog. `EvaluationService` runs only in an
+experiment run that names metrics; it calls `arc-eval` over HTTP after the
+inference is saved, so it never blocks or corrupts the inference result.
 
 ## Domain model
 
@@ -204,8 +204,9 @@ sequenceDiagram
     API-->>Client: 201 Created
 ```
 
-When the request names metrics, evaluation runs after the commit shown above and
-adds its scores to the response. That path, and its failure modes, is in
+An experiment run reuses the sequence above (with the experiment's model and
+decoding config), then evaluates after the commit when the run names metrics and
+adds the scores to its response. That path, and its failure modes, is in
 [dataflow.md](dataflow.md).
 
 ## Persistence guarantee
@@ -227,8 +228,7 @@ message.
 | --- | --- | --- |
 | Empty `input_text` | Pydantic validation | 422 |
 | Input over 50,000 characters | `InputTooLargeError` | 413 |
-| Unknown model referenced (e.g. experiment target) | `ModelNotFoundError` | 404 |
-| Deployed model missing or inactive | `DeployedModelUnavailableError` | 503 |
+| Unknown model referenced (by `/inference` or an experiment) | `ModelNotFoundError` | 404 |
 | Weights or tokenizer fail to load | `ModelLoadError` | 503 |
 | Generation fails | `GenerationError` | 500 |
 | Corrupt stored data on read | `CorruptStoredDataError` | 500 |
@@ -246,7 +246,8 @@ the file without writing.
 
 The CLI (`src/arc_model_lab/cli/models.py`) supports `list`, `get`, `activate`,
 `deactivate`, and `smoke` (load a model and run one summary). `activate` and
-`deactivate` toggle `status`, which gates whether `/inference` will use a model.
+`deactivate` toggle `status`, a lifecycle marker (`active`, `inactive`,
+`deprecated`); `/inference` resolves any registered model by name.
 
 ## Configuration
 
@@ -258,7 +259,7 @@ cached. See `.env.example` for the full set. Groups:
 - Default model identity: `ARC_MODEL_NAME`, `ARC_MODEL_PROVIDER`, `ARC_MODEL_ID`,
   `ARC_TOKENIZER_ID`, `ARC_ADAPTER_PATH`.
 - Compute device: `device` (`auto`, `cpu`, `mps`, `cuda`).
-- Generation: `ARC_MAX_INPUT_TOKENS`, `ARC_MAX_NEW_TOKENS`, `ARC_NUM_BEAMS`.
+- Generation: `ARC_MAX_INPUT_TOKENS`, `ARC_MAX_OUTPUT_TOKENS`, `ARC_TEMPERATURE`.
 - Server: `ARC_API_HOST`, `ARC_API_PORT`.
 - Evaluation (a separate `EvalSettings`, prefix `ARC_EVAL_`): `ARC_EVAL_SERVICE_URL`
   (empty disables scoring), `ARC_EVAL_TIMEOUT_SECONDS`.
@@ -323,11 +324,12 @@ and deterministic. Coverage runs with branch coverage enabled.
 
 ## Deferred capabilities
 
-These are intentionally absent until a concrete need exists: experiments,
-datasets, prompt versioning, training runs, a model registry, multi-provider
-inference, async or streaming inference, an event bus, and OpenTelemetry tracing.
+These are intentionally absent until a concrete need exists: datasets, prompt
+versioning, training runs, a model registry, multi-provider inference, async or
+streaming inference, an event bus, and OpenTelemetry tracing.
 
-Evaluation is already here. An inference can be scored by `arc-eval` and its
-per-metric results stored (see [dataflow.md](dataflow.md)), which closed the first
+Inference and experiments are already here. `/inference` runs a named model and
+persists the result; an experiment run scores its output through `arc-eval` and
+stores the per-metric results (see [dataflow.md](dataflow.md)), closing the
 feedback loop: generate output, persist the inference, score it, persist the
 score.

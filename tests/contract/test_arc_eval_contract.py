@@ -22,38 +22,35 @@ pytestmark = pytest.mark.contract
 
 def test_request_serializes_to_arc_eval_schema() -> None:
     request = EvalRequest(
-        task_type="summarization",
         input_text="source",
         output_text="summary",
         prompt="rendered",
+        metrics=["faithfulness"],
         metadata=EvalMetadata(inference_id="i-1", model_id="m-1"),
     )
 
     payload = request.model_dump(mode="json")
 
-    assert set(payload) == {"task_type", "input_text", "output_text", "prompt", "metrics", "metadata"}
-    assert isinstance(payload["task_type"], str)
+    assert set(payload) == {"input_text", "output_text", "prompt", "metrics", "metadata"}
     assert isinstance(payload["input_text"], str)
     assert isinstance(payload["output_text"], str)
-    assert payload["prompt"] is None or isinstance(payload["prompt"], str)
-    assert payload["metrics"] is None or isinstance(payload["metrics"], list)
+    assert isinstance(payload["prompt"], str)
+    assert payload["metrics"] == ["faithfulness"]
     assert payload["metadata"] == {"inference_id": "i-1", "model_id": "m-1"}
 
 
-def test_request_carries_optional_metrics() -> None:
-    payload = EvalRequest(
-        task_type="summarization",
-        input_text="source",
-        output_text="summary",
-        metrics=["faithfulness"],
-    ).model_dump(mode="json")
-
-    assert payload["metrics"] == ["faithfulness"]
-
-
-def test_request_requires_output_text() -> None:
-    with pytest.raises(ValidationError):
-        EvalRequest.model_validate({"task_type": "summarization", "input_text": "source"})
+def test_request_requires_metrics_prompt_and_output() -> None:
+    # metrics, prompt, and output_text are all mandatory in the contract.
+    base = {
+        "input_text": "source",
+        "output_text": "summary",
+        "prompt": "rendered",
+        "metrics": ["faithfulness"],
+        "metadata": {},
+    }
+    for field in ("metrics", "prompt", "output_text"):
+        with pytest.raises(ValidationError):
+            EvalRequest.model_validate({k: v for k, v in base.items() if k != field})
 
 
 def test_response_parses_provider_payload() -> None:

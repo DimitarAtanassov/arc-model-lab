@@ -11,14 +11,6 @@ class ModelNotFoundError(DomainError):
     """The requested model is not registered in the catalog."""
 
 
-class DeployedModelUnavailableError(DomainError):
-    """The configured deployed model is missing or inactive.
-
-    A server-side misconfiguration, not a client mistake: callers of ``/inference``
-    do not choose the model, so this surfaces as 503, not 404/409.
-    """
-
-
 class ModelLoadError(DomainError):
     """A model's weights or tokenizer could not be loaded."""
 

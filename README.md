@@ -91,16 +91,18 @@ Model weights download once into the `hf_cache` volume, never into the image.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/inference` | Run inference on `input_text`; persists and returns one inference (evaluates when `metrics` are given) |
+| `POST` | `/inference` | Run the model named by `model_name` on `input_text`; persists and returns one inference (no evaluation) |
+| `POST` | `/experiments` | Create a named run configuration (model + decoding) |
+| `POST` | `/experiments/{id}/run` | Run an experiment: infer, store, and (when `metrics` are named) evaluate |
 | `GET` | `/health` | Liveness probe |
 | `GET` | `/docs` | Interactive OpenAPI docs |
 
-Summarize a document:
+Summarize a document (the caller names the model and the decoding config):
 
 ```bash
 curl -s http://localhost:8000/inference \
   -H 'content-type: application/json' \
-  -d '{"input_text": "Large language models can summarize long documents into concise overviews."}'
+  -d '{"model_name": "qwen2.5-1.5b-instruct", "input_text": "Large language models can summarize long documents into concise overviews.", "temperature": 0.0}'
 ```
 
 The response is the persisted inference row:
@@ -119,11 +121,11 @@ The response is the persisted inference row:
 }
 ```
 
-The model is not selectable per request: every call runs on the deployed model
-(`ARC_MODEL_NAME`). Change the deployed model through configuration and restart,
-not through the request body. If the deployed model is missing from the catalog
-or inactive, `/inference` returns 503 (a server-side misconfiguration), not a
-client 4xx.
+`/inference` is pure inference: it never evaluates and never runs under an
+experiment, so the response carries no `experiment_id` and no scores. The caller
+names the model by `model_name`; an unknown name returns `404`. Decoding is set
+by `temperature` (0 is greedy and deterministic, higher samples); output length
+uses the server default (`ARC_MAX_OUTPUT_TOKENS`).
 
 Inspect and manage the catalog from the CLI:
 
@@ -132,16 +134,17 @@ make model.list                                 # list registered models
 make model.get NAME=qwen2.5-1.5b-instruct       # show one model
 make model.smoke NAME=qwen2.5-1.5b-instruct     # load + run one summary
 make model.activate NAME=gemma-3-1b-it          # mark it active (deployable)
-make model.deactivate NAME=gemma-3-1b-it        # mark it inactive (503 if it is the deployed model)
+  make model.deactivate NAME=gemma-3-1b-it        # mark it inactive
 ```
 
 ## Evaluation
 
-After an inference is stored, `arc-model-lab` can send it to the `arc-eval`
-service for quality scoring. Each metric score (faithfulness, answer relevance,
-and so on) is persisted in `evaluation_results`, linked to the inference id.
-Evaluation is a separate service boundary, so inference storage never depends on
-it.
+Evaluation runs inside an experiment, not `/inference`. An experiment pins a
+model and decoding config; running it infers, stores the inference, and (when the
+run names `metrics`) sends the interaction to `arc-eval` for scoring. Each metric
+score (faithfulness, answer relevance, and so on) is persisted in
+`evaluation_results`, linked to the inference id. Evaluation is a separate service
+boundary, so inference storage never depends on it.
 
 Point the service at a running `arc-eval` and set a request timeout:
 
@@ -150,20 +153,25 @@ ARC_EVAL_SERVICE_URL=http://localhost:8001   # empty disables evaluation
 ARC_EVAL_TIMEOUT_SECONDS=30
 ```
 
-Evaluation is opt-in per request. Name the `metrics` to score the output against;
-omit them to skip evaluation entirely. An unknown metric name returns `404`:
+Create an experiment, then run it with the metrics to score. An unknown metric
+name returns `404`:
 
 ```bash
-curl -s http://localhost:8000/inference \
+curl -s http://localhost:8000/experiments \
+  -H 'content-type: application/json' \
+  -d '{"name": "greedy-baseline", "model_name": "qwen2.5-1.5b-instruct"}'
+
+curl -s http://localhost:8000/experiments/<experiment-id>/run \
   -H 'content-type: application/json' \
   -d '{"input_text": "A long article.", "metrics": ["faithfulness", "answer_relevance"]}'
 ```
 
-The response carries the scores next to the summary:
+The run response carries the scores and the experiment id next to the summary:
 
 ```json
 {
   "id": "8f0c1e2a-...",
+  "experiment_id": "1c2d3e4f-...",
   "output_text": "A concise summary.",
   "evaluation": {
     "status": "completed",
@@ -175,9 +183,9 @@ The response carries the scores next to the summary:
 ```
 
 `status` is `completed` when `arc-eval` scored the summary, `failed` when it was
-unreachable or returned an unusable response (online requests fail open: the
-summary is still returned and stored), or `skipped` when no
-`ARC_EVAL_SERVICE_URL` is configured.
+unreachable or returned an unusable response (runs fail open: the summary is
+still returned and stored), or `skipped` when no `ARC_EVAL_SERVICE_URL` is
+configured.
 
 Evaluate inferences that predate this feature, or whose evaluation failed, from
 the CLI. These commands upsert on the metric key, so they are safe to re-run:
@@ -218,8 +226,8 @@ All settings are environment variables with the `ARC_` prefix (see
 | `ARC_TOKENIZER_ID` | `Qwen/Qwen2.5-1.5B-Instruct` | HuggingFace tokenizer to load |
 | `ARC_MODEL_NAME` | `qwen2.5-1.5b-instruct` | Registered name (unique key) |
 | `ARC_MAX_INPUT_TOKENS` | `1024` | Input truncation length |
-| `ARC_MAX_NEW_TOKENS` | `256` | Generated token budget |
-| `ARC_NUM_BEAMS` | `1` | Decoding: 1 = greedy, >1 = beam search |
+| `ARC_MAX_OUTPUT_TOKENS` | `256` | Default generated token budget |
+| `ARC_TEMPERATURE` | `0.0` | Default sampling temperature: 0 = greedy, up to 2.0 |
 | `ARC_API_PORT` | `8000` | HTTP server port |
 | `ARC_EVAL_SERVICE_URL` | (empty) | arc-eval base URL; empty disables evaluation |
 | `ARC_EVAL_TIMEOUT_SECONDS` | `30` | arc-eval request timeout (seconds) |

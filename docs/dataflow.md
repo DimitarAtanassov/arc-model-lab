@@ -45,13 +45,13 @@ flowchart LR
     API --> Client
 ```
 
-## Online request: inference with evaluation
+## Experiment run: inference with evaluation
 
-The route commits the inference before it calls evaluation, so the two run in
-separate transactions. `arc-eval` scores the requested `metrics` (or, without an
-explicit list, the metrics for the task type: `summarization` maps to
-faithfulness and answer relevance), persists its own copy, and returns only the
-metrics that scored.
+An experiment run commits the inference before it calls evaluation, so the two
+run in separate transactions. When the run names `metrics`, `arc-eval` scores
+exactly those (an unknown metric is a 404), persists its own copy, and returns
+only the metrics that scored. `/inference` on its own is the same flow without the
+evaluation block: it neither scores nor tags the row with an experiment id.
 
 ```mermaid
 sequenceDiagram
@@ -66,10 +66,10 @@ sequenceDiagram
     participant ERepo as EvaluationResultRepository
     participant DB as Postgres
 
-    Client->>API: POST /inference
-    API->>Inf: summarize(session, input_text)
-    Inf->>Inf: resolve deployed model (503 if missing/inactive)
-    Inf->>MS: generate(model, messages)
+    Client->>API: POST /experiments/{id}/run
+    API->>Inf: run_for_experiment(model, input_text, config)
+    Note over API,Inf: model and decoding come from the experiment
+    Inf->>MS: generate(model, messages, config)
     MS-->>Inf: GenerationResult
     Inf->>IRepo: add(inference)
     IRepo->>DB: INSERT inference
@@ -118,8 +118,9 @@ is untouched.
 
 Inference and evaluation never share a transaction.
 
-- `InferenceService.summarize` inserts and commits the `inference` row, then
-  returns. A failure here returns an error status and stores nothing.
+- `InferenceService` inserts and commits the `inference` row (via `summarize`
+  for `/inference`, or `run_for_experiment` for an experiment run), then returns.
+  A failure here returns an error status and stores nothing.
 - `EvaluationService.evaluate_inference` runs after that commit. It writes
   `evaluation_results` in its own transaction. A failure leaves the inference row
   in place and returns `failed`.

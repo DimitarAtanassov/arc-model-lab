@@ -37,7 +37,6 @@ from arc_model_lab.domain import (
 from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.experiment_service import ExperimentService
 from arc_model_lab.services.inference_service import InferenceService
-from arc_model_lab.services.inference_workflow import InferenceWorkflow
 from arc_model_lab.services.model_service import ChatMessage, GenerationResult, ModelService
 
 pytestmark = pytest.mark.integration
@@ -64,7 +63,7 @@ class _CapturingModelService(ModelService):
 
 
 def _config() -> GenerationConfig:
-    return GenerationConfig(max_input_tokens=1024, max_new_tokens=256, num_beams=1)
+    return GenerationConfig(temperature=0.0, max_output_tokens=256)
 
 
 def _persist_model(session: Session, name: str = "base") -> Model:
@@ -80,11 +79,12 @@ def _experiment(model_id: object, name: str = "exp") -> Experiment:
 
 
 def _service(model_service: ModelService) -> ExperimentService:
-    workflow = InferenceWorkflow(
-        InferenceService(model_service, deployed_model_name="unused"),
-        EvaluationService(None),
-    )
-    return ExperimentService(workflow)
+    return ExperimentService(InferenceService(model_service), EvaluationService(None))
+
+
+def _create(service: ExperimentService, session: Session, model_name: str, *, name: str = "exp") -> Experiment:
+    """Create an experiment via the service and return the stored domain entity."""
+    return service.create(session, name=name, model_name=model_name, generation_config=_config()).experiment
 
 
 def test_add_and_get_round_trips(db_session: Session) -> None:
@@ -147,13 +147,13 @@ def test_aggregate_scores_averages_by_metric(db_session: Session) -> None:
 def test_create_rejects_unknown_model(db_session: Session, fake_model_service: ModelService) -> None:
     service = _service(fake_model_service)
     with pytest.raises(ModelNotFoundError):
-        service.create(db_session, _experiment(uuid4()))
+        service.create(db_session, name="exp", model_name="does-not-exist", generation_config=_config())
 
 
 def test_run_tags_inference_with_experiment_id(db_session: Session, fake_model_service: ModelService) -> None:
     model = _persist_model(db_session)
     service = _service(fake_model_service)
-    experiment = service.create(db_session, _experiment(model.id))
+    experiment = _create(service, db_session, model.name)
 
     result = service.run(db_session, experiment.id, "summarize this")
 
@@ -180,10 +180,10 @@ def test_get_by_name_round_trips(db_session: Session) -> None:
 def test_create_rejects_duplicate_name(db_session: Session, fake_model_service: ModelService) -> None:
     model = _persist_model(db_session)
     service = _service(fake_model_service)
-    service.create(db_session, _experiment(model.id, name="dup"))
+    _create(service, db_session, model.name, name="dup")
 
     with pytest.raises(ExperimentNameConflictError):
-        service.create(db_session, _experiment(model.id, name="dup"))
+        _create(service, db_session, model.name, name="dup")
 
 
 def test_results_rejects_unknown_experiment(db_session: Session, fake_model_service: ModelService) -> None:
@@ -196,7 +196,7 @@ def test_results_rejects_unknown_experiment(db_session: Session, fake_model_serv
 def test_compare_rejects_unknown_experiment(db_session: Session, fake_model_service: ModelService) -> None:
     model = _persist_model(db_session)
     service = _service(fake_model_service)
-    known = service.create(db_session, _experiment(model.id, name="known"))
+    known = _create(service, db_session, model.name, name="known")
 
     with pytest.raises(ExperimentNotFoundError):
         service.compare(db_session, known.id, uuid4())
@@ -206,8 +206,8 @@ def test_run_uses_the_experiment_generation_config(db_session: Session, settings
     model = _persist_model(db_session)
     capturing = _CapturingModelService(settings)
     service = _service(capturing)
-    config = GenerationConfig(max_input_tokens=128, max_new_tokens=32, num_beams=3)
-    experiment = service.create(db_session, Experiment(name="cfg", model_id=model.id, generation_config=config))
+    config = GenerationConfig(temperature=0.7, max_output_tokens=32)
+    experiment = service.create(db_session, name="cfg", model_name=model.name, generation_config=config).experiment
 
     service.run(db_session, experiment.id, "summarize this")
 
@@ -217,7 +217,7 @@ def test_run_uses_the_experiment_generation_config(db_session: Session, settings
 def test_compare_with_the_same_id_returns_two_entries(db_session: Session, fake_model_service: ModelService) -> None:
     model = _persist_model(db_session)
     service = _service(fake_model_service)
-    experiment = service.create(db_session, _experiment(model.id, name="solo"))
+    experiment = _create(service, db_session, model.name, name="solo")
 
     comparison = service.compare(db_session, experiment.id, experiment.id)
 

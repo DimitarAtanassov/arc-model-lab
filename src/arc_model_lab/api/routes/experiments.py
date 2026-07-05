@@ -1,7 +1,7 @@
 """The experiments endpoints: create, fetch, run, and compare run configurations.
 
-A run reuses the deployed-model inference response shape; the difference is that
-the model and decoding come from the experiment, not the deployed default. All
+A run infers under the experiment's model and decoding config, stores the
+inference, then scores it via arc-eval when the run names metrics. All
 persistence and orchestration live in :class:`ExperimentService`; this module is
 a thin transport adapter.
 """
@@ -15,13 +15,13 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from arc_model_lab.api.dependencies import get_experiment_service, get_session
-from arc_model_lab.api.schemas import InferenceResponse
 from arc_model_lab.api.schemas.experiments import (
     ExperimentComparisonResponse,
     ExperimentCreateRequest,
     ExperimentResponse,
     ExperimentResultsResponse,
     ExperimentRunRequest,
+    ExperimentRunResponse,
 )
 from arc_model_lab.services.experiment_service import ExperimentService
 
@@ -33,21 +33,28 @@ router = APIRouter(prefix="/experiments", tags=["experiments"])
 
 @router.post("", response_model=ExperimentResponse, status_code=status.HTTP_201_CREATED)
 def create_experiment(payload: ExperimentCreateRequest, session: SessionDep, service: ServiceDep) -> ExperimentResponse:
-    experiment = service.create(session, payload.to_domain())
-    return ExperimentResponse.from_domain(experiment)
+    view = service.create(
+        session,
+        name=payload.name,
+        model_name=payload.model_name,
+        generation_config=payload.generation_config.to_domain(),
+        description=payload.description,
+    )
+    return ExperimentResponse.from_domain(view.experiment, view.model_name)
 
 
 @router.get("/{experiment_id}", response_model=ExperimentResponse)
 def get_experiment(experiment_id: UUID, session: SessionDep, service: ServiceDep) -> ExperimentResponse:
-    return ExperimentResponse.from_domain(service.get(session, experiment_id))
+    view = service.get(session, experiment_id)
+    return ExperimentResponse.from_domain(view.experiment, view.model_name)
 
 
-@router.post("/{experiment_id}/run", response_model=InferenceResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/{experiment_id}/run", response_model=ExperimentRunResponse, status_code=status.HTTP_201_CREATED)
 def run_experiment(
     experiment_id: UUID, payload: ExperimentRunRequest, session: SessionDep, service: ServiceDep
-) -> InferenceResponse:
+) -> ExperimentRunResponse:
     result = service.run(session, experiment_id, payload.input_text, metrics=payload.metrics)
-    return InferenceResponse.from_inference(result.inference, result.evaluation)
+    return ExperimentRunResponse.from_inference(result.inference, result.evaluation)
 
 
 @router.get("/{experiment_id}/results", response_model=ExperimentResultsResponse)

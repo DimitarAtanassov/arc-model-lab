@@ -1,4 +1,4 @@
-"""Unit tests for InferenceService input guards."""
+"""Unit tests for InferenceService: model resolution, guards, and persistence."""
 
 from __future__ import annotations
 
@@ -9,78 +9,89 @@ import pytest
 from sqlalchemy.orm import Session
 
 from arc_model_lab.domain import (
-    DeployedModelUnavailableError,
     GenerationConfig,
     InputTooLargeError,
     Model,
-    ModelStatus,
+    ModelNotFoundError,
     Provider,
 )
 from arc_model_lab.services import inference_service as inference_service_module
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_service import ModelService
-from arc_model_lab.services.run_context import RunContext
 
 
-def test_summarize_rejects_oversized_input(fake_model_service: ModelService) -> None:
-    service = InferenceService(fake_model_service, "test-model")
+def _config() -> GenerationConfig:
+    return GenerationConfig(temperature=0.0, max_output_tokens=64)
+
+
+def _model(name: str = "m") -> Model:
+    return Model(name=name, provider=Provider.HUGGINGFACE, model_id="x/y", tokenizer_id="x/y")
+
+
+def _patch_model_repo(monkeypatch: pytest.MonkeyPatch, model: Model | None) -> MagicMock:
+    repository = MagicMock()
+    repository.get_by_name.return_value = model
+    monkeypatch.setattr(inference_service_module, "ModelRepository", lambda session: repository)
+    return repository
+
+
+def _patch_inference_repo(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    added: list[object] = []
+    repository = MagicMock()
+    repository.add.side_effect = lambda inference: (added.append(inference), inference)[1]
+    monkeypatch.setattr(inference_service_module, "InferenceRepository", lambda session: repository)
+    return added
+
+
+def test_summarize_raises_when_model_missing(fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch) -> None:
+    repository = _patch_model_repo(monkeypatch, None)
+    service = InferenceService(fake_model_service)
+
+    with pytest.raises(ModelNotFoundError):
+        service.summarize(MagicMock(spec=Session), model_name="missing", input_text="hello", config=_config())
+    repository.get_by_name.assert_called_once_with("missing")
+
+
+def test_summarize_rejects_oversized_input(fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_model_repo(monkeypatch, _model())
+    service = InferenceService(fake_model_service)
 
     with pytest.raises(InputTooLargeError):
-        service.summarize(MagicMock(spec=Session), "x" * 60_000)
+        service.summarize(MagicMock(spec=Session), model_name="m", input_text="x" * 60_000, config=_config())
 
 
-def _deployed_model(status: ModelStatus) -> Model:
-    return Model(
-        name="deployed",
-        provider=Provider.HUGGINGFACE,
-        model_id="x/y",
-        tokenizer_id="x/y",
-        status=status,
+def test_summarize_persists_inference_without_experiment_id(
+    fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = _model()
+    _patch_model_repo(monkeypatch, model)
+    added = _patch_inference_repo(monkeypatch)
+
+    inference = InferenceService(fake_model_service).summarize(
+        MagicMock(spec=Session), model_name="m", input_text="hello", config=_config()
     )
-
-
-def test_summarize_resolves_the_deployed_model_and_raises_when_missing(
-    fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repository = MagicMock()
-    repository.get_by_name.return_value = None
-    monkeypatch.setattr(inference_service_module, "ModelRepository", lambda session: repository)
-
-    service = InferenceService(fake_model_service, "deployed")
-
-    with pytest.raises(DeployedModelUnavailableError):
-        service.summarize(MagicMock(spec=Session), "hello")
-    repository.get_by_name.assert_called_once_with("deployed")
-
-
-def test_summarize_raises_when_deployed_model_inactive(
-    fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repository = MagicMock()
-    repository.get_by_name.return_value = _deployed_model(ModelStatus.INACTIVE)
-    monkeypatch.setattr(inference_service_module, "ModelRepository", lambda session: repository)
-
-    service = InferenceService(fake_model_service, "deployed")
-
-    with pytest.raises(DeployedModelUnavailableError):
-        service.summarize(MagicMock(spec=Session), "hello")
-
-
-def test_summarize_with_explicit_model_skips_deployed_resolution(
-    fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repository = MagicMock()
-    monkeypatch.setattr(inference_service_module, "ModelRepository", lambda session: repository)
-    model = _deployed_model(ModelStatus.ACTIVE)
-    context = RunContext(
-        model=model,
-        config=GenerationConfig(max_input_tokens=1024, max_new_tokens=256, num_beams=1),
-        experiment_id=uuid4(),
-    )
-
-    service = InferenceService(fake_model_service, "deployed")
-    inference = service.summarize(MagicMock(spec=Session), "hello", context)
 
     assert inference.model_id == model.id
-    assert inference.experiment_id == context.experiment_id
-    repository.get_by_name.assert_not_called()
+    assert inference.experiment_id is None
+    assert added
+    assert added[0] is inference
+
+
+def test_run_for_experiment_tags_the_row(fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch) -> None:
+    added = _patch_inference_repo(monkeypatch)
+    model = _model()
+    experiment_id = uuid4()
+
+    inference = InferenceService(fake_model_service).run_for_experiment(
+        MagicMock(spec=Session),
+        model=model,
+        input_text="hello",
+        config=_config(),
+        experiment_id=experiment_id,
+    )
+
+    assert inference.experiment_id == experiment_id
+    assert inference.model_id == model.id
+    # The experiment path resolves nothing by name; the model is passed in.
+    assert added
+    assert added[0].experiment_id == experiment_id

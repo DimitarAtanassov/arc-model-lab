@@ -26,11 +26,11 @@ from arc_model_lab.domain import (
     Model,
     Provider,
 )
-from arc_model_lab.services.inference_workflow import InferenceResult
+from arc_model_lab.services.experiment_service import ExperimentRunResult
 
 _ID = UUID("11111111-1111-1111-1111-111111111111")
 _OTHER = UUID("22222222-2222-2222-2222-222222222222")
-_CONFIG = GenerationConfig(max_input_tokens=1024, max_new_tokens=256, num_beams=1)
+_CONFIG = GenerationConfig(temperature=0.0, max_output_tokens=256)
 
 
 def _seed_model(session: Session, name: str = "base") -> Model:
@@ -57,9 +57,9 @@ def test_main_create_assembles_config_from_args(monkeypatch: pytest.MonkeyPatch)
     calls: list[tuple[object, ...]] = []
     monkeypatch.setattr(cli, "_create", lambda *args: calls.append(args))
 
-    cli.main(["create", "--name", "e", "--model-name", "m", "--num-beams", "2"])
+    cli.main(["create", "--name", "e", "--model-name", "m", "--temperature", "0.7"])
 
-    assert calls == [("e", "m", GenerationConfig(max_input_tokens=1024, max_new_tokens=256, num_beams=2))]
+    assert calls == [("e", "m", GenerationConfig(temperature=0.7, max_output_tokens=256))]
 
 
 @pytest.mark.parametrize(
@@ -142,7 +142,7 @@ def test_run_prints_scores_when_evaluation_present(
         output_text="summary",
         latency_ms=5,
     )
-    scored = InferenceResult(
+    scored = ExperimentRunResult(
         inference=inference,
         evaluation=EvaluationOutcome(
             status=EvaluationStatus.COMPLETED,
@@ -164,7 +164,7 @@ def test_run_prints_scores_when_evaluation_present(
     )
 
     class _Service:
-        def run(self, *args: object, **kwargs: object) -> InferenceResult:
+        def run(self, *args: object, **kwargs: object) -> ExperimentRunResult:
             return scored
 
     monkeypatch.setattr(cli, "_experiment_service", _Service)
@@ -172,10 +172,7 @@ def test_run_prints_scores_when_evaluation_present(
 
     cli._run(_ID, "hello", ["faithfulness", "relevance"])
 
-    assert (
-        capsys.readouterr().out
-        == f"{inference.id}\tsummary\tfaithfulness=0.910, relevance=0.750\n"
-    )
+    assert capsys.readouterr().out == f"{inference.id}\tsummary\tfaithfulness=0.910, relevance=0.750\n"
 
 
 def test_run_prints_dash_when_evaluation_empty(
@@ -189,13 +186,13 @@ def test_run_prints_dash_when_evaluation_empty(
         output_text="summary",
         latency_ms=5,
     )
-    no_scores = InferenceResult(
+    no_scores = ExperimentRunResult(
         inference=inference,
         evaluation=EvaluationOutcome(status=EvaluationStatus.COMPLETED, results=()),
     )
 
     class _Service:
-        def run(self, *args: object, **kwargs: object) -> InferenceResult:
+        def run(self, *args: object, **kwargs: object) -> ExperimentRunResult:
             return no_scores
 
     monkeypatch.setattr(cli, "_experiment_service", _Service)
@@ -217,10 +214,10 @@ def test_run_prints_dash_when_evaluation_absent(
         output_text="summary",
         latency_ms=5,
     )
-    result_without_evaluation = InferenceResult(inference=inference, evaluation=None)
+    result_without_evaluation = ExperimentRunResult(inference=inference, evaluation=None)
 
     class _Service:
-        def run(self, *args: object, **kwargs: object) -> InferenceResult:
+        def run(self, *args: object, **kwargs: object) -> ExperimentRunResult:
             return result_without_evaluation
 
     monkeypatch.setattr(cli, "_experiment_service", _Service)

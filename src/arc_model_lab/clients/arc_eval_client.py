@@ -15,7 +15,7 @@ exception to reason about when it decides whether to fail open.
 from __future__ import annotations
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from arc_model_lab.domain import EvaluationError, UnknownMetricError
@@ -37,14 +37,17 @@ class EvalMetadata(BaseModel):
 
 
 class EvalRequest(BaseModel):
-    """The outbound body for ``POST /v1/evaluate``."""
+    """The outbound body for ``POST /v1/evaluate``.
 
-    task_type: str
+    Mirrors the arc-eval ``/v1/evaluate`` contract: ``metrics``, ``prompt``, and
+    ``metadata`` are all required, and there is no task classification.
+    """
+
     input_text: str
     output_text: str
-    prompt: str | None = None
-    metrics: list[str] | None = None
-    metadata: EvalMetadata = Field(default_factory=EvalMetadata)
+    prompt: str
+    metrics: list[str]
+    metadata: EvalMetadata
 
 
 class EvalMetricResult(BaseModel):

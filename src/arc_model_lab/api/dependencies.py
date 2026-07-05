@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.experiment_service import ExperimentService
 from arc_model_lab.services.inference_service import InferenceService
-from arc_model_lab.services.inference_workflow import InferenceWorkflow
 
 
 def get_session(request: Request) -> Iterator[Session]:
@@ -35,16 +34,9 @@ def get_evaluation_service(request: Request) -> EvaluationService:
     return service
 
 
-def get_inference_workflow(
+def get_experiment_service(
     inference_service: Annotated[InferenceService, Depends(get_inference_service)],
     evaluation_service: Annotated[EvaluationService, Depends(get_evaluation_service)],
-) -> InferenceWorkflow:
-    """Compose the inference/evaluation use case from the shared services."""
-    return InferenceWorkflow(inference_service, evaluation_service)
-
-
-def get_experiment_service(
-    workflow: Annotated[InferenceWorkflow, Depends(get_inference_workflow)],
 ) -> ExperimentService:
-    """Compose the experiment use case over the shared inference workflow."""
-    return ExperimentService(workflow)
+    """Compose the experiment use case from the shared inference and eval services."""
+    return ExperimentService(inference_service, evaluation_service)

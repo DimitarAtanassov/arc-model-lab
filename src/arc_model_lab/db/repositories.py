@@ -308,7 +308,6 @@ def _to_experiment(record: ExperimentRecord) -> Experiment:
         model_id=record.model_id,
         prompt_version_id=record.prompt_version_id,
         generation_config=_load_generation_config(record),
-        created_by=record.created_by,
         created_at=record.created_at,
     )
 
@@ -334,7 +333,6 @@ def _to_experiment_record(experiment: Experiment) -> ExperimentRecord:
         model_id=experiment.model_id,
         prompt_version_id=experiment.prompt_version_id,
         generation_config=experiment.generation_config.to_dict(),
-        created_by=experiment.created_by,
         created_at=experiment.created_at,
     )
 
