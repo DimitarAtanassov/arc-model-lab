@@ -15,7 +15,18 @@ from sqlalchemy.orm import Session
 from arc_model_lab.cli import experiments as cli
 from arc_model_lab.config import Settings
 from arc_model_lab.db.repositories import ExperimentRepository, ModelRepository
-from arc_model_lab.domain import Experiment, GenerationConfig, Model, Provider
+from arc_model_lab.domain import (
+    EvaluationOutcome,
+    EvaluationResult,
+    EvaluationStatus,
+    Experiment,
+    ExperimentMetricAggregate,
+    GenerationConfig,
+    Inference,
+    Model,
+    Provider,
+)
+from arc_model_lab.services.inference_workflow import InferenceResult
 
 _ID = UUID("11111111-1111-1111-1111-111111111111")
 _OTHER = UUID("22222222-2222-2222-2222-222222222222")
@@ -110,3 +121,86 @@ def test_compare_prints_a_line_per_experiment(db_session: Session, capsys: pytes
     out = capsys.readouterr().out
     assert str(first.id) in out
     assert str(second.id) in out
+
+
+def test_print_aggregates_prints_metric_rows(capsys: pytest.CaptureFixture[str]) -> None:
+    aggregates = [ExperimentMetricAggregate(metric_name="faithfulness", average_score=0.9, evaluated_count=3)]
+
+    cli._print_aggregates(_ID, aggregates)
+
+    assert capsys.readouterr().out == f"{_ID}\tfaithfulness\t0.900\t3\n"
+
+
+def test_run_prints_scores_when_evaluation_present(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inference = Inference(
+        model_id=_ID,
+        input_text="input",
+        prompt="prompt",
+        output_text="summary",
+        latency_ms=5,
+    )
+    scored = InferenceResult(
+        inference=inference,
+        evaluation=EvaluationOutcome(
+            status=EvaluationStatus.COMPLETED,
+            results=(
+                EvaluationResult(
+                    inference_id=inference.id,
+                    metric_name="faithfulness",
+                    score=0.91,
+                    evaluator_name="eval",
+                ),
+                EvaluationResult(
+                    inference_id=inference.id,
+                    metric_name="relevance",
+                    score=0.75,
+                    evaluator_name="eval",
+                ),
+            ),
+        ),
+    )
+
+    class _Service:
+        def run(self, *args: object, **kwargs: object) -> InferenceResult:
+            return scored
+
+    monkeypatch.setattr(cli, "_experiment_service", lambda: _Service())
+    monkeypatch.setattr(cli, "_in_session", lambda op: op(None))
+
+    cli._run(_ID, "hello", ["faithfulness", "relevance"])
+
+    assert (
+        capsys.readouterr().out
+        == f"{inference.id}\tsummary\tfaithfulness=0.910, relevance=0.750\n"
+    )
+
+
+def test_run_prints_dash_when_evaluation_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inference = Inference(
+        model_id=_ID,
+        input_text="input",
+        prompt="prompt",
+        output_text="summary",
+        latency_ms=5,
+    )
+    no_scores = InferenceResult(
+        inference=inference,
+        evaluation=EvaluationOutcome(status=EvaluationStatus.COMPLETED, results=()),
+    )
+
+    class _Service:
+        def run(self, *args: object, **kwargs: object) -> InferenceResult:
+            return no_scores
+
+    monkeypatch.setattr(cli, "_experiment_service", lambda: _Service())
+    monkeypatch.setattr(cli, "_in_session", lambda op: op(None))
+
+    cli._run(_ID, "hello", ["faithfulness"])
+
+    assert capsys.readouterr().out == f"{inference.id}\tsummary\t-\n"
