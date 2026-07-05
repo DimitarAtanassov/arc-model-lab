@@ -204,3 +204,28 @@ def test_run_prints_dash_when_evaluation_empty(
     cli._run(_ID, "hello", ["faithfulness"])
 
     assert capsys.readouterr().out == f"{inference.id}\tsummary\t-\n"
+
+
+def test_run_prints_dash_when_evaluation_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inference = Inference(
+        model_id=_ID,
+        input_text="input",
+        prompt="prompt",
+        output_text="summary",
+        latency_ms=5,
+    )
+    result_without_evaluation = InferenceResult(inference=inference, evaluation=None)
+
+    class _Service:
+        def run(self, *args: object, **kwargs: object) -> InferenceResult:
+            return result_without_evaluation
+
+    monkeypatch.setattr(cli, "_experiment_service", _Service)
+    monkeypatch.setattr(cli, "_in_session", lambda op: op(None))
+
+    cli._run(_ID, "hello", ["faithfulness"])
+
+    assert capsys.readouterr().out == f"{inference.id}\tsummary\t-\n"
