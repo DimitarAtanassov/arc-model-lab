@@ -12,6 +12,7 @@ from arc_model_lab.domain import (
     EvaluationError,
     EvaluationStatus,
     Inference,
+    InferenceNotFoundError,
     UnknownMetricError,
 )
 from arc_model_lab.services import evaluation_service as module
@@ -71,3 +72,26 @@ def test_build_request_maps_inference_fields() -> None:
     assert request.metrics == ["faithfulness"]
     assert request.metadata.inference_id == str(inference.id)
     assert request.metadata.model_id == str(inference.model_id)
+
+
+def test_evaluate_by_id_raises_when_inference_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    repository = MagicMock()
+    repository.get.return_value = None
+    monkeypatch.setattr(module, "InferenceRepository", lambda session: repository)
+
+    with pytest.raises(InferenceNotFoundError):
+        EvaluationService(MagicMock()).evaluate_inference_by_id(MagicMock(spec=Session), uuid4(), ["faithfulness"])
+
+
+def test_evaluate_by_id_loads_then_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
+    inference = _inference()
+    repository = MagicMock()
+    repository.get.return_value = inference
+    monkeypatch.setattr(module, "InferenceRepository", lambda session: repository)
+
+    # No client, so evaluate_inference short-circuits to SKIPPED. That proves the
+    # id was resolved to the loaded inference and handed to evaluate_inference.
+    outcome = EvaluationService(None).evaluate_inference_by_id(MagicMock(spec=Session), inference.id, ["faithfulness"])
+
+    assert outcome.status is EvaluationStatus.SKIPPED
+    repository.get.assert_called_once_with(inference.id)

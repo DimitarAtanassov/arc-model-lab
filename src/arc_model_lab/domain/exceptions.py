@@ -32,6 +32,10 @@ class InputTooLargeError(DomainError):
     """Input exceeds the maximum accepted size."""
 
 
+class InferenceNotFoundError(DomainError):
+    """The requested inference does not exist."""
+
+
 class EvaluationError(DomainError):
     """Calling the evaluation service failed or returned an unusable response."""
 

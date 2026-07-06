@@ -11,6 +11,7 @@ client is wired for the environment the outcome is ``SKIPPED``.
 from __future__ import annotations
 
 import logging
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -20,13 +21,14 @@ from arc_model_lab.clients.arc_eval_client import (
     EvalMetricResult,
     EvalRequest,
 )
-from arc_model_lab.db.repositories import EvaluationResultRepository
+from arc_model_lab.db.repositories import EvaluationResultRepository, InferenceRepository
 from arc_model_lab.domain import (
     EvaluationError,
     EvaluationOutcome,
     EvaluationResult,
     EvaluationStatus,
     Inference,
+    InferenceNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,6 +71,20 @@ class EvaluationService:
         persisted = EvaluationResultRepository(session).upsert_many(results)
         session.commit()
         return EvaluationOutcome(status=EvaluationStatus.COMPLETED, results=tuple(persisted))
+
+    def evaluate_inference_by_id(self, session: Session, inference_id: UUID, metrics: list[str]) -> EvaluationOutcome:
+        """Load the inference with ``inference_id`` and score it against ``metrics``.
+
+        The standalone counterpart to an experiment run: it scores an inference
+        that already exists, with no experiment involved. Raises
+        :class:`InferenceNotFoundError` (404) when no inference has that id, then
+        delegates to :meth:`evaluate_inference`, so the skip, fail-open, and
+        unknown-metric behavior is identical.
+        """
+        inference = InferenceRepository(session).get(inference_id)
+        if inference is None:
+            raise InferenceNotFoundError(f"Inference not found: {inference_id}")
+        return self.evaluate_inference(session, inference, metrics)
 
 
 def _build_request(inference: Inference, metrics: list[str]) -> EvalRequest:

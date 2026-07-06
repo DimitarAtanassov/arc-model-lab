@@ -13,6 +13,7 @@ from arc_model_lab.domain import (
     ExperimentNameConflictError,
     ExperimentNotFoundError,
     GenerationError,
+    InferenceNotFoundError,
     InputTooLargeError,
     InvalidGenerationConfigError,
     ModelInactiveError,
@@ -46,6 +47,10 @@ async def _experiment_not_found(request: Request, exc: Exception) -> Response:
 
 async def _experiment_name_conflict(request: Request, exc: Exception) -> Response:
     return _error(status.HTTP_409_CONFLICT, str(exc) or "Experiment name already exists")
+
+
+async def _inference_not_found(request: Request, exc: Exception) -> Response:
+    return _error(status.HTTP_404_NOT_FOUND, str(exc) or "Inference not found")
 
 
 async def _invalid_generation_config(request: Request, exc: Exception) -> Response:
@@ -102,6 +107,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ModelInactiveError, _model_inactive)
     app.add_exception_handler(ExperimentNotFoundError, _experiment_not_found)
     app.add_exception_handler(ExperimentNameConflictError, _experiment_name_conflict)
+    app.add_exception_handler(InferenceNotFoundError, _inference_not_found)
     app.add_exception_handler(InvalidGenerationConfigError, _invalid_generation_config)
     app.add_exception_handler(CorruptStoredDataError, _corrupt_stored_data)
     app.add_exception_handler(InputTooLargeError, _input_too_large)

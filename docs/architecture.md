@@ -283,6 +283,7 @@ message.
 | Unknown model referenced (by `/inference` or an experiment) | `ModelNotFoundError` | 404 |
 | Model not active (on `/inference`; experiments bypass this) | `ModelInactiveError` | 409 |
 | Unknown experiment referenced | `ExperimentNotFoundError` | 404 |
+| Unknown inference referenced (on evaluate) | `InferenceNotFoundError` | 404 |
 | Duplicate experiment name on create | `ExperimentNameConflictError` | 409 |
 | Weights or tokenizer fail to load | `ModelLoadError` | 503 |
 | Generation fails | `GenerationError` | 500 |

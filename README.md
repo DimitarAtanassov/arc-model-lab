@@ -93,6 +93,7 @@ Model weights download once into the `hf_cache` volume, never into the image.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/inference` | Run the model named by `model_name` on `input_text`; persists and returns one inference (no evaluation) |
+| `POST` | `/inference/{id}/evaluate` | Score an existing inference against named metrics (no experiment) |
 | `POST` | `/experiments` | Create a named run configuration (model + decoding) |
 | `POST` | `/experiments/{id}/run` | Run an experiment: infer, store, link, and (when `metrics` are named) evaluate |
 | `GET` | `/experiments/{id}/results` | Aggregated scores for an experiment, per metric |

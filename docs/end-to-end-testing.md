@@ -255,8 +255,18 @@ curl -s localhost:8000/experiments/$EXP_A/compare/$EXP_B | jq
 
 ### 8. Score an existing inference from the CLI
 
-Evaluation is not only for experiments. The CLI scores inference rows that already
-exist, for example the plain inference from step 2.
+Evaluation is not only for experiments. Score an inference row that already
+exists, for example the plain inference from step 2, over the API or the CLI.
+
+Over the API (`POST /inference/{id}/evaluate`):
+
+```bash
+curl -s localhost:8000/inference/$INFERENCE_ID/evaluate \
+  -H 'content-type: application/json' \
+  -d '{"metrics":["faithfulness","answer_relevance"]}' | jq
+```
+
+Or from the CLI:
 
 ```bash
 cd "$ML"

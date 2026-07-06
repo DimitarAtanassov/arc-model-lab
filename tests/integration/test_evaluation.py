@@ -26,6 +26,14 @@ ClientFactory = Callable[[ArcEvalClient | None], TestClient]
 
 _MODEL = "test-model"
 _METRICS = ["faithfulness", "answer_relevance"]
+_UNKNOWN_ID = "00000000-0000-0000-0000-000000000000"
+
+
+def _create_inference(client: TestClient) -> str:
+    """Create one inference via /inference and return its id."""
+    response = client.post("/inference", json={"model_name": _MODEL, "input_text": "A long article."})
+    assert response.status_code == 201, response.text
+    return str(response.json()["id"])
 
 
 def _create_experiment(client: TestClient, *, name: str = "eval-exp") -> str:
@@ -149,4 +157,67 @@ def test_unknown_metric_returns_404_and_keeps_the_inference(make_client: ClientF
     assert response.json()["detail"] == "unknown metric 'nope'"
     # The inference itself succeeded and is persisted; only evaluation was rejected.
     assert len(db_session.execute(select(InferenceRecord)).scalars().all()) == 1
+    assert db_session.execute(select(EvaluationResultRecord)).scalars().all() == []
+
+
+# --- Standalone evaluation endpoint: POST /inference/{id}/evaluate ------------
+# Evaluation without an experiment: score an inference that already exists.
+
+
+def test_evaluate_endpoint_scores_existing_inference(make_client: ClientFactory, db_session: Session) -> None:
+    client = make_client(_mock_client(_scores_handler))
+    inference_id = _create_inference(client)
+
+    response = client.post(f"/inference/{inference_id}/evaluate", json={"metrics": _METRICS})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "completed"
+    scores = {result["metric_name"]: result["score"] for result in body["results"]}
+    assert scores == {"faithfulness": 0.91, "answer_relevance": 0.8}
+
+    rows = db_session.execute(select(EvaluationResultRecord)).scalars().all()
+    assert {row.metric_name for row in rows} == {"faithfulness", "answer_relevance"}
+    assert all(row.inference_id == UUID(inference_id) for row in rows)
+
+
+def test_evaluate_endpoint_unknown_inference_returns_404(make_client: ClientFactory) -> None:
+    # The eval client must not be called: a missing inference is a 404 before it.
+    client = make_client(_mock_client(_unexpected_call_handler))
+
+    response = client.post(f"/inference/{_UNKNOWN_ID}/evaluate", json={"metrics": ["faithfulness"]})
+
+    assert response.status_code == 404
+
+
+def test_evaluate_endpoint_requires_at_least_one_metric(make_client: ClientFactory) -> None:
+    client = make_client(_mock_client(_unexpected_call_handler))
+    inference_id = _create_inference(client)
+
+    response = client.post(f"/inference/{inference_id}/evaluate", json={"metrics": []})
+
+    assert response.status_code == 422
+
+
+def test_evaluate_endpoint_skips_without_eval_client(client: TestClient, db_session: Session) -> None:
+    inference_id = _create_inference(client)
+
+    response = client.post(f"/inference/{inference_id}/evaluate", json={"metrics": ["faithfulness"]})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "skipped"
+    assert db_session.execute(select(EvaluationResultRecord)).scalars().all() == []
+
+
+def test_evaluate_endpoint_unknown_metric_returns_404(make_client: ClientFactory, db_session: Session) -> None:
+    def unknown_metric(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "unknown metric 'nope'"})
+
+    client = make_client(_mock_client(unknown_metric))
+    inference_id = _create_inference(client)
+
+    response = client.post(f"/inference/{inference_id}/evaluate", json={"metrics": ["nope"]})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "unknown metric 'nope'"
     assert db_session.execute(select(EvaluationResultRecord)).scalars().all() == []

@@ -52,14 +52,15 @@ harness that collects those scores so you can compare configuration A against B.
 
 ## Endpoints at a glance
 
-The service exposes one inference endpoint and a small set of experiment
-endpoints. Evaluation has no endpoint of its own in `arc-model-lab`: it runs
-inside an experiment `run`, or from the evaluation CLI on rows that already
-exist.
+The service exposes an inference endpoint, a standalone evaluate endpoint, and a
+small set of experiment endpoints. Evaluation can run three ways: on its own via
+`POST /inference/{id}/evaluate`, inside an experiment `run`, or from the
+evaluation CLI on rows that already exist.
 
 | Method and path | What it is for |
 | --- | --- |
 | `POST /inference` | Run a model once and store the output. No scoring, no experiment link. |
+| `POST /inference/{id}/evaluate` | Score an existing inference against named metrics. No experiment needed. |
 | `POST /experiments` | Define an experiment: a name, a model, and a decoding config. |
 | `GET /experiments/{id}` | Fetch one experiment's configuration. |
 | `POST /experiments/{id}/run` | Run the experiment once: infer, store, link, and (with `metrics`) score. |
@@ -165,6 +166,24 @@ to the inference. Use this to score history or fill gaps. To score brand-new
 output instead, use an experiment (next section).
 
 Set `ARC_EVAL_SERVICE_URL` first (see [Before you start](#before-you-start)).
+
+### From the API
+
+Score an existing inference by id (the `id` from an `/inference` response) against
+the metrics you name:
+
+```bash
+curl -s http://localhost:8000/inference/8f0c1e2a-.../evaluate \
+  -H 'content-type: application/json' \
+  -d '{"metrics": ["faithfulness", "answer_relevance"]}'
+```
+
+The response is the evaluation envelope: `status` (`completed`, `skipped`, or
+`failed`) and, when completed, one `score` per metric. Re-running is safe; scores
+upsert on the metric rather than duplicate. This is the standalone counterpart to
+an experiment run: the same scoring, with no experiment.
+
+### From the command line
 
 Score a single inference by id (the `id` from an inference or experiment run):
 
