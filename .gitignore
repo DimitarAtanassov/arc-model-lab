@@ -35,6 +35,8 @@ todo.md
 
 copilot-instructions.md
 AGENTS.md
+CLAUDE.md
+.claude/
 .github/agents/
 .github/instructions/
 .github/prompts/
