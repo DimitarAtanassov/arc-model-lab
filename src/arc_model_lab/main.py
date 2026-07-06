@@ -15,6 +15,7 @@ from arc_model_lab.config import Settings, get_settings
 from arc_model_lab.db.base import create_engine_from_url, create_session_factory
 from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.inference_service import InferenceService
+from arc_model_lab.services.model_catalog_service import ModelCatalogService
 from arc_model_lab.services.model_service import ModelService
 
 
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.model_service = model_service
     app.state.inference_service = InferenceService(model_service)
     app.state.evaluation_service = EvaluationService(eval_client)
+    app.state.model_catalog_service = ModelCatalogService()
 
     try:
         yield

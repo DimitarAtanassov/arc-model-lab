@@ -130,6 +130,17 @@ class InferenceRepository:
         records = self._session.scalars(stmt).all()
         return [_to_inference(record) for record in records]
 
+    def list_recent(self, limit: int) -> list[Inference]:
+        """Return the most recent inferences, newest first (bounded page size).
+
+        Backs the history table. Ordering is by ``created_at`` descending; the
+        caller bounds ``limit`` so the collection is never unbounded.
+        """
+        records = self._session.scalars(
+            select(InferenceRecord).order_by(InferenceRecord.created_at.desc()).limit(limit)
+        ).all()
+        return [_to_inference(record) for record in records]
+
 
 class EvaluationResultRepository:
     def __init__(self, session: Session) -> None:
@@ -202,6 +213,13 @@ class ExperimentRepository:
     def get_by_name(self, name: str) -> Experiment | None:
         record = self._session.scalar(select(ExperimentRecord).where(ExperimentRecord.name == name))
         return _to_experiment(record) if record is not None else None
+
+    def list_recent(self, limit: int) -> list[Experiment]:
+        """Return the most recent experiments, newest first (bounded page size)."""
+        records = self._session.scalars(
+            select(ExperimentRecord).order_by(ExperimentRecord.created_at.desc()).limit(limit)
+        ).all()
+        return [_to_experiment(record) for record in records]
 
     def aggregate_scores(self, experiment_id: UUID) -> list[ExperimentMetricAggregate]:
         """Average score and count per metric across the experiment's evaluations.

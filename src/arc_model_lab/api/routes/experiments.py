@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from arc_model_lab.api.dependencies import get_experiment_service, get_session
@@ -28,7 +28,20 @@ from arc_model_lab.services.experiment_service import ExperimentService
 SessionDep = Annotated[Session, Depends(get_session)]
 ServiceDep = Annotated[ExperimentService, Depends(get_experiment_service)]
 
+_DEFAULT_LIMIT = 50
+_MAX_LIMIT = 200
+
 router = APIRouter(prefix="/experiments", tags=["experiments"])
+
+
+@router.get("", response_model=list[ExperimentResponse])
+def list_experiments(
+    session: SessionDep,
+    service: ServiceDep,
+    limit: Annotated[int, Query(ge=1, le=_MAX_LIMIT)] = _DEFAULT_LIMIT,
+) -> list[ExperimentResponse]:
+    """Return recent experiments, newest first (bounded page size)."""
+    return [ExperimentResponse.from_domain(view.experiment, view.model_name) for view in service.list_recent(session, limit)]
 
 
 @router.post("", response_model=ExperimentResponse, status_code=status.HTTP_201_CREATED)

@@ -1,9 +1,10 @@
 from fastapi import APIRouter
 
-from arc_model_lab.api.routes import evaluations, experiments, health, inference
+from arc_model_lab.api.routes import evaluations, experiments, health, inference, models
 
 router = APIRouter()
 router.include_router(health.router)
+router.include_router(models.router)
 router.include_router(inference.router)
 router.include_router(evaluations.router)
 router.include_router(experiments.router)

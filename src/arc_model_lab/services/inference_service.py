@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from arc_model_lab.db.repositories import InferenceRepository, ModelRepository
+from arc_model_lab.db.repositories import (
+    EvaluationResultRepository,
+    InferenceRepository,
+    ModelRepository,
+)
 from arc_model_lab.domain import (
+    EvaluationResult,
     GenerationConfig,
     Inference,
+    InferenceNotFoundError,
     InputTooLargeError,
     Model,
     ModelInactiveError,
@@ -24,6 +31,14 @@ _SUMMARY_SYSTEM_PROMPT = (
     "You are a precise assistant that writes clear, concise summaries. Capture the key points and leave out filler."
 )
 _SUMMARY_INSTRUCTION = "Summarize the following text:\n\n{text}"
+
+
+@dataclass(frozen=True, slots=True)
+class InferenceDetailView:
+    """One inference paired with its persisted evaluation scores, for the read API."""
+
+    inference: Inference
+    evaluations: list[EvaluationResult]
 
 
 def build_summary_messages(input_text: str) -> list[ChatMessage]:
@@ -116,3 +131,18 @@ class InferenceService:
         if model.status != ModelStatus.ACTIVE:
             raise ModelInactiveError(f"Model is not active: {model_name}")
         return model
+
+    def list_recent(self, session: Session, limit: int) -> list[Inference]:
+        """Return the most recent inferences for the history surface (bounded)."""
+        return InferenceRepository(session).list_recent(limit)
+
+    def get_detail(self, session: Session, inference_id: UUID) -> InferenceDetailView:
+        """Return one inference with its evaluation scores, or raise (404).
+
+        Raises :class:`InferenceNotFoundError` when no inference has that id.
+        """
+        inference = InferenceRepository(session).get(inference_id)
+        if inference is None:
+            raise InferenceNotFoundError(f"Inference not found: {inference_id}")
+        evaluations = EvaluationResultRepository(session).list_for_inference(inference_id)
+        return InferenceDetailView(inference=inference, evaluations=evaluations)

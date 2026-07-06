@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.experiment_service import ExperimentService
 from arc_model_lab.services.inference_service import InferenceService
+from arc_model_lab.services.model_catalog_service import ModelCatalogService
 
 
 def get_session(request: Request) -> Iterator[Session]:
@@ -26,6 +27,11 @@ def get_session(request: Request) -> Iterator[Session]:
 
 def get_inference_service(request: Request) -> InferenceService:
     service: InferenceService = request.app.state.inference_service
+    return service
+
+
+def get_model_catalog_service(request: Request) -> ModelCatalogService:
+    service: ModelCatalogService = request.app.state.model_catalog_service
     return service
 
 

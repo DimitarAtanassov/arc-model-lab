@@ -96,6 +96,19 @@ class ExperimentService:
         model = ModelRepository(session).require_by_id(experiment.model_id)
         return ExperimentView(experiment=experiment, model_name=model.name)
 
+    def list_recent(self, session: Session, limit: int) -> list[ExperimentView]:
+        """Return recent experiments paired with their model names (bounded).
+
+        Model names are resolved with a single catalog read and an in-memory map,
+        not one query per experiment, so the list stays free of an N+1.
+        """
+        experiments = ExperimentRepository(session).list_recent(limit)
+        names = {model.id: model.name for model in ModelRepository(session).list_all()}
+        return [
+            ExperimentView(experiment=experiment, model_name=names.get(experiment.model_id, "unknown"))
+            for experiment in experiments
+        ]
+
     def run(
         self,
         session: Session,
