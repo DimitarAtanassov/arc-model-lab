@@ -12,7 +12,7 @@ import pytest
 import torch
 
 from arc_model_lab.config import Settings
-from arc_model_lab.domain import GenerationError, Model, ModelLoadError, Provider
+from arc_model_lab.domain import GenerationConfig, GenerationError, Model, ModelLoadError, Provider
 from arc_model_lab.services import model_service as model_service_module
 from arc_model_lab.services.model_service import (
     ChatMessage,
@@ -180,3 +180,33 @@ def test_generate_wraps_failure_in_generation_error(monkeypatch: pytest.MonkeyPa
 
     with pytest.raises(GenerationError, match="Text generation failed"):
         service.generate(_model(), _MESSAGES)
+
+
+@pytest.mark.parametrize(
+    ("temperature", "expect_sampling"),
+    [(0.0, False), (0.7, True)],
+)
+def test_generate_threads_decoding_config(
+    monkeypatch: pytest.MonkeyPatch, temperature: float, expect_sampling: bool
+) -> None:
+    # temperature 0 stays greedy (do_sample False, no temperature kwarg); above 0
+    # enables sampling and forwards the temperature to the runtime.
+    captured: dict[str, object] = {}
+
+    class _CapturingModel(_FakeModel):
+        def generate(self, *, input_ids: torch.Tensor, max_new_tokens: int, **kwargs: object) -> torch.Tensor:
+            captured["max_new_tokens"] = max_new_tokens
+            captured.update(kwargs)
+            return torch.cat([input_ids, torch.tensor([[4, 5]])], dim=1)
+
+    service = _service()
+    runtime = RuntimeModel(tokenizer=_FakeTokenizer(), model=_CapturingModel(), device="cpu")
+    monkeypatch.setattr(service, "load", lambda _model: runtime)
+
+    service.generate(_model(), _MESSAGES, GenerationConfig(temperature=temperature, max_output_tokens=16))
+
+    assert captured["max_new_tokens"] == 16
+    assert captured["do_sample"] is expect_sampling
+    assert ("temperature" in captured) is expect_sampling
+    if expect_sampling:
+        assert captured["temperature"] == temperature
