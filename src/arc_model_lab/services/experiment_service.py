@@ -13,6 +13,7 @@ candidate), unlike the deployed-model default.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -26,11 +27,11 @@ from arc_model_lab.domain import (
     ExperimentResults,
     GenerationConfig,
     Inference,
-    Model,
-    ModelNotFoundError,
 )
 from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.inference_service import InferenceService
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +77,7 @@ class ExperimentService:
         redundant (and would not close the concurrent-create race anyway). The
         model is only required to exist (ModelNotFoundError -> 404 otherwise).
         """
-        model = self._require_model_by_name(session, model_name)
+        model = ModelRepository(session).require_by_name(model_name)
         experiment = Experiment(
             name=name,
             model_id=model.id,
@@ -90,7 +91,7 @@ class ExperimentService:
     def get(self, session: Session, experiment_id: UUID) -> ExperimentView:
         """Return the experiment and its model name, or raise (404)."""
         experiment = self._require_experiment(session, experiment_id)
-        model = self._require_model_by_id(session, experiment.model_id)
+        model = ModelRepository(session).require_by_id(experiment.model_id)
         return ExperimentView(experiment=experiment, model_name=model.name)
 
     def run(
@@ -108,7 +109,7 @@ class ExperimentService:
         for an unknown experiment and ModelNotFoundError if its model was removed.
         """
         experiment = self._require_experiment(session, experiment_id)
-        model = self._require_model_by_id(session, experiment.model_id)
+        model = ModelRepository(session).require_by_id(experiment.model_id)
         inference = self._inference.run_for_experiment(
             session,
             model=model,
@@ -116,9 +117,18 @@ class ExperimentService:
             config=experiment.generation_config,
             experiment_id=experiment.id,
         )
-        if not metrics:
-            return ExperimentRunResult(inference=inference)
-        outcome = self._evaluation.evaluate_inference(session, inference, metrics)
+        outcome = self._evaluation.evaluate_inference(session, inference, metrics) if metrics else None
+        logger.info(
+            "experiment run complete",
+            extra={
+                "experiment_id": str(experiment.id),
+                "model_name": model.name,
+                "inference_id": str(inference.id),
+                "latency_ms": inference.latency_ms,
+                "metric_count": len(metrics) if metrics else 0,
+                "evaluation_status": outcome.status.value if outcome is not None else "not_requested",
+            },
+        )
         return ExperimentRunResult(inference=inference, evaluation=outcome)
 
     def results(self, session: Session, experiment_id: UUID) -> ExperimentResults:
@@ -132,11 +142,7 @@ class ExperimentService:
         experiment_id_a: UUID,
         experiment_id_b: UUID,
     ) -> list[ExperimentResults]:
-        """Aggregate scores for both experiments, preserving order and identity.
-
-        Returns a list, not a map: comparing an experiment with itself yields two
-        entries rather than silently collapsing to one.
-        """
+        """Aggregate scores for both experiments, in the order given."""
         return [
             self.results(session, experiment_id_a),
             self.results(session, experiment_id_b),
@@ -147,15 +153,3 @@ class ExperimentService:
         if experiment is None:
             raise ExperimentNotFoundError(f"Experiment not found: {experiment_id}")
         return experiment
-
-    def _require_model_by_id(self, session: Session, model_id: UUID) -> Model:
-        model = ModelRepository(session).get_by_id(model_id)
-        if model is None:
-            raise ModelNotFoundError(f"Model not found: {model_id}")
-        return model
-
-    def _require_model_by_name(self, session: Session, model_name: str) -> Model:
-        model = ModelRepository(session).get_by_name(model_name)
-        if model is None:
-            raise ModelNotFoundError(f"Model not found: {model_name}")
-        return model

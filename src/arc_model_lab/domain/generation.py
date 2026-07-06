@@ -6,8 +6,11 @@ value object means a caller cannot request a knob the runtime ignores: unknown
 keys are rejected by :meth:`GenerationConfig.from_mapping`, and out-of-range
 values are rejected at construction by ``__post_init__``.
 
-The default values live here once so the HTTP schema and the CLI cannot drift
-apart on what "default decoding" means.
+These default constants are the reproducible baseline for experiment configs.
+The server's runtime settings (``Settings.temperature`` and
+``Settings.max_output_tokens``) default from them so "default decoding" has one
+definition; ``/inference`` resolves its default from those runtime settings, not
+from these constants directly.
 """
 
 from __future__ import annotations
@@ -40,8 +43,11 @@ class GenerationConfig:
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
 
     def __post_init__(self) -> None:
-        _temperature(self.temperature)
-        _positive_int("max_output_tokens", self.max_output_tokens)
+        # Frozen dataclass: normalize through object.__setattr__ so the stored
+        # values honor the annotations (temperature=1 becomes 1.0) and the
+        # validators' coerced return values are used rather than discarded.
+        object.__setattr__(self, "temperature", _temperature(self.temperature))
+        object.__setattr__(self, "max_output_tokens", _positive_int("max_output_tokens", self.max_output_tokens))
 
     def to_dict(self) -> dict[str, float | int]:
         return asdict(self)

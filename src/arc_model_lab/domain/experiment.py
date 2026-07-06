@@ -1,8 +1,8 @@
 """The Experiment domain entity: a named, reproducible run configuration.
 
-An experiment pins a catalog model and a :class:`GenerationConfig` (and, once
-phase 03 lands, a prompt version). Running it produces inference and evaluation
-records tagged with the experiment id, so results are comparable in plain SQL.
+An experiment pins a catalog model and a :class:`GenerationConfig`. Running it
+produces inference and evaluation records tagged with the experiment id, so
+results are comparable in plain SQL.
 The caller of ``/inference`` never chooses a model; an experiment is an
 engineer-owned construct that runs its own configuration server-side.
 """
@@ -22,7 +22,6 @@ class Experiment:
     model_id: UUID
     generation_config: GenerationConfig
     description: str | None = None
-    prompt_version_id: UUID | None = None  # reserved for phase 03; nullable now
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -40,9 +39,8 @@ class ExperimentMetricAggregate:
 class ExperimentResults:
     """An experiment's aggregated metric scores, tagged with its id.
 
-    The unit of comparison: pairing each id with its aggregates keeps two
-    experiments distinct even when an experiment is compared with itself, which a
-    map keyed by id would silently collapse to one entry.
+    The unit of comparison: each experiment id paired with its per-metric
+    aggregates.
     """
 
     experiment_id: UUID

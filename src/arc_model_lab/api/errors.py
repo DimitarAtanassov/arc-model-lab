@@ -15,6 +15,7 @@ from arc_model_lab.domain import (
     GenerationError,
     InputTooLargeError,
     InvalidGenerationConfigError,
+    ModelInactiveError,
     ModelLoadError,
     ModelNotFoundError,
     UnknownMetricError,
@@ -29,6 +30,10 @@ def _error(status_code: int, detail: str) -> JSONResponse:
 
 async def _model_not_found(request: Request, exc: Exception) -> Response:
     return _error(status.HTTP_404_NOT_FOUND, str(exc) or "Model not found")
+
+
+async def _model_inactive(request: Request, exc: Exception) -> Response:
+    return _error(status.HTTP_409_CONFLICT, str(exc) or "Model is not active")
 
 
 async def _unknown_metric(request: Request, exc: Exception) -> Response:
@@ -94,6 +99,7 @@ async def _unhandled(request: Request, exc: Exception) -> Response:
 
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ModelNotFoundError, _model_not_found)
+    app.add_exception_handler(ModelInactiveError, _model_inactive)
     app.add_exception_handler(ExperimentNotFoundError, _experiment_not_found)
     app.add_exception_handler(ExperimentNameConflictError, _experiment_name_conflict)
     app.add_exception_handler(InvalidGenerationConfigError, _invalid_generation_config)

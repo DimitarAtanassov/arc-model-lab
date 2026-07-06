@@ -30,6 +30,7 @@ from arc_model_lab.domain import (
     Inference,
     InvalidGenerationConfigError,
     Model,
+    ModelNotFoundError,
     ModelStatus,
     Provider,
 )
@@ -46,6 +47,20 @@ class ModelRepository:
     def get_by_id(self, model_id: UUID) -> Model | None:
         record = self._session.get(ModelRecord, model_id)
         return _to_model(record) if record is not None else None
+
+    def require_by_name(self, name: str) -> Model:
+        """Return the model with this name, or raise ``ModelNotFoundError`` (404)."""
+        model = self.get_by_name(name)
+        if model is None:
+            raise ModelNotFoundError(f"Model not found: {name}")
+        return model
+
+    def require_by_id(self, model_id: UUID) -> Model:
+        """Return the model with this id, or raise ``ModelNotFoundError`` (404)."""
+        model = self.get_by_id(model_id)
+        if model is None:
+            raise ModelNotFoundError(f"Model not found: {model_id}")
+        return model
 
     def add(self, model: Model) -> Model:
         self._session.add(_to_model_record(model))
@@ -306,7 +321,6 @@ def _to_experiment(record: ExperimentRecord) -> Experiment:
         name=record.name,
         description=record.description,
         model_id=record.model_id,
-        prompt_version_id=record.prompt_version_id,
         generation_config=_load_generation_config(record),
         created_at=record.created_at,
     )
@@ -331,7 +345,6 @@ def _to_experiment_record(experiment: Experiment) -> ExperimentRecord:
         name=experiment.name,
         description=experiment.description,
         model_id=experiment.model_id,
-        prompt_version_id=experiment.prompt_version_id,
         generation_config=experiment.generation_config.to_dict(),
         created_at=experiment.created_at,
     )

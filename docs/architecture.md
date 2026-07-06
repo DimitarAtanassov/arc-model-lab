@@ -229,6 +229,7 @@ message.
 | Empty `input_text` | Pydantic validation | 422 |
 | Input over 50,000 characters | `InputTooLargeError` | 413 |
 | Unknown model referenced (by `/inference` or an experiment) | `ModelNotFoundError` | 404 |
+| Model not active (on `/inference`; experiments bypass this) | `ModelInactiveError` | 409 |
 | Weights or tokenizer fail to load | `ModelLoadError` | 503 |
 | Generation fails | `GenerationError` | 500 |
 | Corrupt stored data on read | `CorruptStoredDataError` | 500 |
@@ -246,8 +247,10 @@ the file without writing.
 
 The CLI (`src/arc_model_lab/cli/models.py`) supports `list`, `get`, `activate`,
 `deactivate`, and `smoke` (load a model and run one summary). `activate` and
-`deactivate` toggle `status`, a lifecycle marker (`active`, `inactive`,
-`deprecated`); `/inference` resolves any registered model by name.
+`deactivate` toggle `status` (`active`, `inactive`, `deprecated`), which gates
+online serving: `/inference` serves only active models (a non-active model is a
+409). Experiments deliberately bypass the gate so a candidate model can be
+evaluated before it is activated.
 
 ## Configuration
 

@@ -16,7 +16,6 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
-    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -92,11 +91,7 @@ class EvaluationResultRecord(Base):
 
 
 class ExperimentRecord(Base):
-    """A named, reproducible run configuration (model + generation config).
-
-    ``prompt_version_id`` is a plain nullable column, not a foreign key, until
-    phase 03 introduces prompt versions; naming it now avoids a later rename.
-    """
+    """A named, reproducible run configuration (model + generation config)."""
 
     __tablename__ = "experiments"
     __table_args__ = (UniqueConstraint("name"),)
@@ -105,6 +100,5 @@ class ExperimentRecord(Base):
     name: Mapped[str] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_id: Mapped[UUID] = mapped_column(ForeignKey("models.id", ondelete="RESTRICT"))
-    prompt_version_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
-    generation_config: Mapped[dict[str, float | int]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    generation_config: Mapped[dict[str, float | int]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

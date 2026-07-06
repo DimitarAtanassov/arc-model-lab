@@ -110,7 +110,7 @@ class ModelService:
         self, model: Model, messages: list[ChatMessage], config: GenerationConfig | None = None
     ) -> GenerationResult:
         runtime = self.load(model)
-        resolved = config if config is not None else self._default_generation_config()
+        resolved = config if config is not None else self.default_generation_config()
         try:
             prompt = cast(
                 str,
@@ -159,7 +159,14 @@ class ModelService:
         except Exception as exc:  # noqa: BLE001 - surface any runtime failure as a domain error
             raise GenerationError("Text generation failed") from exc
 
-    def _default_generation_config(self) -> GenerationConfig:
+    def default_generation_config(self) -> GenerationConfig:
+        """The server's default decoding config, sourced from settings.
+
+        This is the single runtime source of ``ARC_TEMPERATURE`` and
+        ``ARC_MAX_OUTPUT_TOKENS``: any generation that does not specify its own
+        decoding (``/inference`` without a ``temperature``, or a smoke run) falls
+        back to this.
+        """
         settings = self._settings
         return GenerationConfig(
             temperature=settings.temperature,

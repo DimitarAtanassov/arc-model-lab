@@ -123,9 +123,10 @@ The response is the persisted inference row:
 
 `/inference` is pure inference: it never evaluates and never runs under an
 experiment, so the response carries no `experiment_id` and no scores. The caller
-names the model by `model_name`; an unknown name returns `404`. Decoding is set
-by `temperature` (0 is greedy and deterministic, higher samples); output length
-uses the server default (`ARC_MAX_OUTPUT_TOKENS`).
+names the model by `model_name`; an unknown name returns `404`. `temperature` is
+optional: pass it (0 is greedy and deterministic, higher samples) to override, or
+omit it to use the server default (`ARC_TEMPERATURE`). Output length is not a
+caller knob; it always uses the server default (`ARC_MAX_OUTPUT_TOKENS`).
 
 Inspect and manage the catalog from the CLI:
 
@@ -133,8 +134,8 @@ Inspect and manage the catalog from the CLI:
 make model.list                                 # list registered models
 make model.get NAME=qwen2.5-1.5b-instruct       # show one model
 make model.smoke NAME=qwen2.5-1.5b-instruct     # load + run one summary
-make model.activate NAME=gemma-3-1b-it          # mark it active (deployable)
-  make model.deactivate NAME=gemma-3-1b-it        # mark it inactive
+make model.activate NAME=gemma-3-1b-it          # allow /inference to serve it
+make model.deactivate NAME=gemma-3-1b-it        # take it out of /inference (409)
 ```
 
 ## Evaluation

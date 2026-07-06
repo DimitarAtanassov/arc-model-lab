@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -12,7 +13,8 @@ from arc_model_lab.domain import (
     Inference,
     InputTooLargeError,
     Model,
-    ModelNotFoundError,
+    ModelInactiveError,
+    ModelStatus,
 )
 from arc_model_lab.services.model_service import ChatMessage, ModelService
 
@@ -37,21 +39,33 @@ class InferenceService:
 
     The caller names the model: ``/inference`` passes a ``model_name`` that this
     service resolves against the catalog (a missing name is ``ModelNotFoundError``
-    -> 404). Experiments instead pass an already-resolved model, their generation
-    config, and the experiment id to tag the row. The commit happens here so a row
-    is persisted before any success response.
+    -> 404; a non-active model is ``ModelInactiveError`` -> 409, so deactivating a
+    model takes it out of online serving). Experiments instead pass an
+    already-resolved model (bypassing the active gate on purpose, to evaluate
+    candidates), their generation config, and the experiment id to tag the row.
+    The commit happens here so a row is persisted before any success response.
     """
 
     def __init__(self, model_service: ModelService) -> None:
         self._model_service = model_service
 
-    def summarize(self, session: Session, *, model_name: str, input_text: str, config: GenerationConfig) -> Inference:
+    def summarize(
+        self, session: Session, *, model_name: str, input_text: str, temperature: float | None = None
+    ) -> Inference:
         """Resolve the named model and run one summarization for ``/inference``.
 
+        Decoding defaults to the server config (``ARC_TEMPERATURE`` and
+        ``ARC_MAX_OUTPUT_TOKENS``); a caller-supplied ``temperature`` overrides
+        only that knob. Output length is not caller-controlled here.
+
         Raises :class:`ModelNotFoundError` (404) when no catalog model has that
-        name, and :class:`InputTooLargeError` (413) for an oversized payload.
+        name, :class:`ModelInactiveError` (409) when the model is not active, and
+        :class:`InputTooLargeError` (413) for an oversized payload.
         """
         model = self._resolve_model(session, model_name)
+        config = self._model_service.default_generation_config()
+        if temperature is not None:
+            config = replace(config, temperature=temperature)
         return self._generate_and_store(session, model=model, input_text=input_text, config=config, experiment_id=None)
 
     def run_for_experiment(
@@ -98,7 +112,7 @@ class InferenceService:
         return persisted
 
     def _resolve_model(self, session: Session, model_name: str) -> Model:
-        model = ModelRepository(session).get_by_name(model_name)
-        if model is None:
-            raise ModelNotFoundError(f"Model not found: {model_name}")
+        model = ModelRepository(session).require_by_name(model_name)
+        if model.status != ModelStatus.ACTIVE:
+            raise ModelInactiveError(f"Model is not active: {model_name}")
         return model

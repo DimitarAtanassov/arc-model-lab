@@ -72,3 +72,12 @@ def test_direct_construction_rejects_non_positive_max_output_tokens(value: int) 
 def test_direct_construction_rejects_out_of_range_temperature() -> None:
     with pytest.raises(InvalidGenerationConfigError):
         GenerationConfig(temperature=2.5, max_output_tokens=256)
+
+
+def test_int_temperature_is_normalized_to_float() -> None:
+    # The float annotation is honored: an int temperature is coerced to a float,
+    # so stored and serialized values stay consistent (1 -> 1.0).
+    config = GenerationConfig(temperature=1, max_output_tokens=256)
+
+    assert isinstance(config.temperature, float)
+    assert config.temperature == 1.0

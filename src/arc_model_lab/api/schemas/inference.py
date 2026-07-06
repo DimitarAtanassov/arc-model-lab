@@ -7,28 +7,28 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arc_model_lab.domain import GenerationConfig, Inference
-from arc_model_lab.domain.generation import DEFAULT_TEMPERATURE
+from arc_model_lab.domain import Inference
+from arc_model_lab.domain.generation import MAX_TEMPERATURE
 
 
 class InferenceRequest(BaseModel):
-    # The caller names the model and the sampling temperature. ``extra="forbid"``
-    # rejects an unknown field (including ``max_output_tokens``, a server default
-    # here) with 422 rather than silently ignoring it.
+    # The caller names the model and may set the sampling temperature; when it is
+    # omitted the server default (``ARC_TEMPERATURE``) applies. ``extra="forbid"``
+    # rejects an unknown field (including ``max_output_tokens``, a server-only
+    # knob) with 422 rather than silently ignoring it.
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
     model_name: str = Field(min_length=1, description="Catalog model to run.")
     input_text: str = Field(min_length=1, description="Text to summarize.")
-    temperature: float = Field(
-        default=DEFAULT_TEMPERATURE,
+    temperature: float | None = Field(
+        default=None,
         ge=0.0,
-        le=2.0,
-        description="Sampling temperature: 0 is greedy/deterministic, higher is more random.",
+        le=MAX_TEMPERATURE,
+        description=(
+            "Sampling temperature: 0 is greedy/deterministic, higher is more random. "
+            "Omit to use the server default (ARC_TEMPERATURE)."
+        ),
     )
-
-    def to_config(self) -> GenerationConfig:
-        # max_output_tokens is not caller-controlled on /inference; use the default.
-        return GenerationConfig(temperature=self.temperature)
 
 
 class InferenceResponse(BaseModel):

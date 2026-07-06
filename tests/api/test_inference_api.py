@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session, sessionmaker
+
+from arc_model_lab.db.repositories import ModelRepository
+from arc_model_lab.domain import Model, ModelStatus, Provider
 
 pytestmark = pytest.mark.integration
 
@@ -48,6 +52,12 @@ def test_temperature_out_of_range_returns_422(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+def test_explicit_temperature_is_accepted(client: TestClient) -> None:
+    # Temperature is an optional caller override; a valid value is honored.
+    response = client.post("/inference", json=_body(temperature=0.7))
+    assert response.status_code == 201
+
+
 def test_metrics_field_is_rejected(client: TestClient) -> None:
     # Evaluation moved out of /inference; a stale metrics field is forbidden.
     response = client.post("/inference", json=_body(metrics=["faithfulness"]))
@@ -73,3 +83,21 @@ def test_generation_failure_returns_500(failing_client: TestClient) -> None:
 def test_model_load_failure_returns_503(model_load_failing_client: TestClient) -> None:
     response = model_load_failing_client.post("/inference", json=_body())
     assert response.status_code == 503
+
+
+def test_inactive_model_returns_409(client: TestClient, session_factory: sessionmaker[Session]) -> None:
+    # Deactivating a model takes it out of /inference serving (409), the safety lever.
+    with session_factory() as session:
+        ModelRepository(session).upsert(
+            Model(
+                name="disabled",
+                provider=Provider.HUGGINGFACE,
+                model_id="x/y",
+                tokenizer_id="x/y",
+                status=ModelStatus.INACTIVE,
+            )
+        )
+        session.commit()
+
+    response = client.post("/inference", json=_body(model_name="disabled"))
+    assert response.status_code == 409

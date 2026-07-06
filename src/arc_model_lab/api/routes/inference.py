@@ -2,7 +2,9 @@
 
 Inference is standalone: it never evaluates and never runs under an experiment,
 so the response carries neither scores nor an experiment id. Evaluation lives in
-the experiment flow. The caller names the model and its decoding config.
+the experiment flow. The caller names the model and may set the sampling
+temperature; an omitted temperature and the output length fall back to the
+server default.
 """
 
 from __future__ import annotations
@@ -32,6 +34,6 @@ def infer(
         session,
         model_name=payload.model_name,
         input_text=payload.input_text,
-        config=payload.to_config(),
+        temperature=payload.temperature,
     )
     return InferenceResponse.from_inference(inference)

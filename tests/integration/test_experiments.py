@@ -32,6 +32,7 @@ from arc_model_lab.domain import (
     Inference,
     Model,
     ModelNotFoundError,
+    ModelStatus,
     Provider,
 )
 from arc_model_lab.services.evaluation_service import EvaluationService
@@ -66,9 +67,15 @@ def _config() -> GenerationConfig:
     return GenerationConfig(temperature=0.0, max_output_tokens=256)
 
 
-def _persist_model(session: Session, name: str = "base") -> Model:
+def _persist_model(session: Session, name: str = "base", *, status: ModelStatus = ModelStatus.ACTIVE) -> Model:
     model = ModelRepository(session).upsert(
-        Model(name=name, provider=Provider.HUGGINGFACE, model_id="org/model", tokenizer_id="org/model")
+        Model(
+            name=name,
+            provider=Provider.HUGGINGFACE,
+            model_id="org/model",
+            tokenizer_id="org/model",
+            status=status,
+        )
     )
     session.commit()
     return model
@@ -102,6 +109,18 @@ def test_add_and_get_round_trips(db_session: Session) -> None:
 
 def test_get_returns_none_when_absent(db_session: Session) -> None:
     assert ExperimentRepository(db_session).get(uuid4()) is None
+
+
+def test_run_allows_an_inactive_model(db_session: Session, fake_model_service: ModelService) -> None:
+    # Experiments deliberately bypass the /inference active gate so a candidate
+    # model can be evaluated before it is activated.
+    model = _persist_model(db_session, name="candidate", status=ModelStatus.INACTIVE)
+    service = _service(fake_model_service)
+    experiment = _create(service, db_session, model.name, name="candidate-exp")
+
+    result = service.run(db_session, experiment.id, "summarize this")
+
+    assert result.inference.experiment_id == experiment.id
 
 
 def test_aggregate_scores_averages_by_metric(db_session: Session) -> None:
@@ -212,16 +231,6 @@ def test_run_uses_the_experiment_generation_config(db_session: Session, settings
     service.run(db_session, experiment.id, "summarize this")
 
     assert capturing.configs == [config]
-
-
-def test_compare_with_the_same_id_returns_two_entries(db_session: Session, fake_model_service: ModelService) -> None:
-    model = _persist_model(db_session)
-    service = _service(fake_model_service)
-    experiment = _create(service, db_session, model.name, name="solo")
-
-    comparison = service.compare(db_session, experiment.id, experiment.id)
-
-    assert [result.experiment_id for result in comparison] == [experiment.id, experiment.id]
 
 
 def test_add_reraises_foreign_key_violation(db_session: Session) -> None:

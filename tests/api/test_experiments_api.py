@@ -33,9 +33,11 @@ def test_create_returns_201_and_echoes_config(client: TestClient) -> None:
     assert body["name"] == "exp-a"
     assert body["model_name"] == _MODEL
     assert body["generation_config"] == _CONFIG
-    # The internal model id is not leaked; the API speaks model names.
-    assert "model_id" not in body
+    # model_id is present on every response, coherent with the inference-shaped
+    # responses; model_name is the friendly config identity alongside it.
+    assert body["model_id"]
     assert "created_by" not in body
+    assert "prompt_version_id" not in body
 
 
 def test_create_rejects_unknown_generation_knob(client: TestClient) -> None:
@@ -135,13 +137,3 @@ def test_run_response_includes_experiment_id(client: TestClient) -> None:
 
     assert response.status_code == 201, response.text
     assert response.json()["experiment_id"] == experiment["id"]
-
-
-def test_compare_same_experiment_returns_two_entries(client: TestClient) -> None:
-    experiment = _create(client, name="solo-api")
-
-    response = client.get(f"/experiments/{experiment['id']}/compare/{experiment['id']}")
-
-    assert response.status_code == 200
-    experiments = response.json()["experiments"]
-    assert [entry["experiment_id"] for entry in experiments] == [experiment["id"], experiment["id"]]

@@ -27,13 +27,14 @@ from arc_model_lab.domain import (
 from arc_model_lab.domain.generation import (
     DEFAULT_MAX_OUTPUT_TOKENS,
     DEFAULT_TEMPERATURE,
+    MAX_TEMPERATURE,
 )
 
 
 class GenerationConfigSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0)
+    temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=MAX_TEMPERATURE)
     max_output_tokens: int = Field(default=DEFAULT_MAX_OUTPUT_TOKENS, ge=1)
 
     def to_domain(self) -> GenerationConfig:
@@ -65,8 +66,8 @@ class ExperimentResponse(BaseModel):
     id: UUID  # noqa: A003 - mirrors the domain primary key
     name: str
     description: str | None
+    model_id: UUID
     model_name: str
-    prompt_version_id: UUID | None
     generation_config: GenerationConfigSchema
     created_at: datetime
 
@@ -76,8 +77,8 @@ class ExperimentResponse(BaseModel):
             id=experiment.id,
             name=experiment.name,
             description=experiment.description,
+            model_id=experiment.model_id,
             model_name=model_name,
-            prompt_version_id=experiment.prompt_version_id,
             generation_config=GenerationConfigSchema.from_domain(experiment.generation_config),
             created_at=experiment.created_at,
         )
