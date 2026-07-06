@@ -341,5 +341,6 @@ make exp.smoke MODEL=qwen2.5-1.5b-instruct
 
 ## See also
 
+- [end-to-end-testing.md](end-to-end-testing.md): a copy-paste walkthrough of the full stack, from inference to scored experiments.
 - [architecture.md](architecture.md): components and request flow.
 - [dataflow.md](dataflow.md): how a run moves through inference and evaluation.

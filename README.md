@@ -101,7 +101,8 @@ Model weights download once into the `hf_cache` volume, never into the image.
 | `GET` | `/docs` | Interactive OpenAPI docs |
 
 New here? The [inference, evaluation, and experiments guide](docs/usage.md) walks
-through each with runnable, real-world examples.
+through each with runnable, real-world examples. To validate the whole stack from
+a clean checkout, follow the [end-to-end testing guide](docs/end-to-end-testing.md).
 
 Summarize a document (the caller names the model and the decoding config):
 
