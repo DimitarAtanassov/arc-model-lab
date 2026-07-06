@@ -14,7 +14,12 @@ from arc_model_lab.domain.exceptions import (
     ModelNotFoundError,
     UnknownMetricError,
 )
-from arc_model_lab.domain.experiment import Experiment, ExperimentMetricAggregate, ExperimentResults
+from arc_model_lab.domain.experiment import (
+    Experiment,
+    ExperimentMetricAggregate,
+    ExperimentResults,
+    ExperimentRun,
+)
 from arc_model_lab.domain.generation import GenerationConfig
 from arc_model_lab.domain.inference import Inference
 from arc_model_lab.domain.model import Model
@@ -31,6 +36,7 @@ __all__ = [
     "ExperimentNameConflictError",
     "ExperimentNotFoundError",
     "ExperimentResults",
+    "ExperimentRun",
     "GenerationConfig",
     "GenerationError",
     "Inference",

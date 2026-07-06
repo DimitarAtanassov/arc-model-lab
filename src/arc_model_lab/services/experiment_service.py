@@ -2,9 +2,10 @@
 
 An experiment run composes inference and evaluation directly: it runs the
 experiment's model and generation config, persists the inference, then (when the
-run names metrics) scores it via arc-eval and persists the scores. Comparison is
-plain SQL aggregation over the tagged inference and evaluation rows, not an
-in-memory join.
+run names metrics) scores it via arc-eval and persists the scores, and finally
+records the experiment-inference association. Inference itself carries no
+experiment reference; comparison is plain SQL aggregation over that association
+and the evaluation rows, not an in-memory join.
 
 The experiment's model is resolved by name on create and only required to exist,
 not to be active: an experiment deliberately targets a chosen model (possibly a
@@ -19,12 +20,13 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from arc_model_lab.db.repositories import ExperimentRepository, ModelRepository
+from arc_model_lab.db.repositories import ExperimentRepository, ExperimentRunRepository, ModelRepository
 from arc_model_lab.domain import (
     EvaluationOutcome,
     Experiment,
     ExperimentNotFoundError,
     ExperimentResults,
+    ExperimentRun,
     GenerationConfig,
     Inference,
 )
@@ -105,8 +107,9 @@ class ExperimentService:
         """Run the experiment's config once, then score it when metrics are named.
 
         The pipeline is infer -> persist inference -> (when metrics are named)
-        evaluate via arc-eval -> persist scores. Raises ExperimentNotFoundError
-        for an unknown experiment and ModelNotFoundError if its model was removed.
+        evaluate via arc-eval -> persist scores -> record the experiment-inference
+        association last. Raises ExperimentNotFoundError for an unknown experiment
+        and ModelNotFoundError if its model was removed.
         """
         experiment = self._require_experiment(session, experiment_id)
         model = ModelRepository(session).require_by_id(experiment.model_id)
@@ -115,9 +118,10 @@ class ExperimentService:
             model=model,
             input_text=input_text,
             config=experiment.generation_config,
-            experiment_id=experiment.id,
         )
         outcome = self._evaluation.evaluate_inference(session, inference, metrics) if metrics else None
+        ExperimentRunRepository(session).add(ExperimentRun(experiment_id=experiment.id, inference_id=inference.id))
+        session.commit()
         logger.info(
             "experiment run complete",
             extra={

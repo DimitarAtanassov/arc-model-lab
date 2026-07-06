@@ -3,11 +3,13 @@
 Audience: backend engineers extending or operating the service. Reading time: 8 minutes.
 
 The service turns text into a durable inference record, then optionally into
-quality scores. The pipeline is `Model -> Inference -> EvaluationResult`.
-Inference and evaluation are separate service boundaries: inference runs locally
-against a HuggingFace model, evaluation is an HTTP call to the `arc-eval`
-service. The entity schema is in [database-erd.md](database-erd.md); the module
-layout is in [architecture.md](architecture.md).
+quality scores. The pipeline is `Model -> Inference -> EvaluationResult`, and an
+experiment run wraps that pipeline and links each inference back to the experiment
+that produced it. Inference and evaluation are separate service boundaries:
+inference runs locally against a HuggingFace model, evaluation is an HTTP call to
+the `arc-eval` service. The entity schema is in
+[database-erd.md](database-erd.md); the module layout is in
+[architecture.md](architecture.md).
 
 ## End-to-end data flow
 
@@ -21,7 +23,7 @@ metric, which is a caller error surfaced as 404.
 
 ```mermaid
 flowchart LR
-    Client[Client] --> API["FastAPI (POST /inference)"]
+    Client[Client] --> API["FastAPI (/inference, /experiments/*/run)"]
 
     subgraph inf ["Inference path (fail-closed)"]
         API --> InfSvc[InferenceService]
@@ -45,13 +47,15 @@ flowchart LR
     API --> Client
 ```
 
-## Experiment run: inference with evaluation
+## Experiment run: inference, evaluation, then the link
 
-An experiment run commits the inference before it calls evaluation, so the two
-run in separate transactions. When the run names `metrics`, `arc-eval` scores
-exactly those (an unknown metric is a 404), persists its own copy, and returns
-only the metrics that scored. `/inference` on its own is the same flow without the
-evaluation block: it neither scores nor tags the row with an experiment id.
+An experiment run does three steps, each in its own transaction: it commits the
+inference, then (when the run names `metrics`) calls evaluation, then records the
+experiment-to-inference link in `experiment_runs` last. When the run names
+`metrics`, `arc-eval` scores exactly those (an unknown metric is a 404), persists
+its own copy, and returns only the metrics that scored. `/inference` on its own is
+just the inference step: it neither scores its output nor links the row to an
+experiment.
 
 ```mermaid
 sequenceDiagram
@@ -64,6 +68,7 @@ sequenceDiagram
     participant AEC as ArcEvalClient
     participant Arc as arc-eval
     participant ERepo as EvaluationResultRepository
+    participant RRepo as ExperimentRunRepository
     participant DB as Postgres
 
     Client->>API: POST /experiments/{id}/run
@@ -85,7 +90,11 @@ sequenceDiagram
     ERepo->>DB: INSERT ... ON CONFLICT DO UPDATE
     Eval->>DB: COMMIT
     Eval-->>API: EvaluationOutcome(completed)
-    API-->>Client: 201 with evaluation
+
+    API->>RRepo: add(experiment_id, inference_id)
+    RRepo->>DB: INSERT experiment_runs
+    API->>DB: COMMIT
+    API-->>Client: 201 with experiment_id and evaluation
 ```
 
 ## Evaluation outcome states
@@ -157,14 +166,25 @@ flowchart TD
 
 ## Data lineage
 
-Each inference belongs to one model; each inference has zero or more evaluation
-results, one row per metric. The unique key
-`(inference_id, metric_name, evaluator_name)` is what makes replay idempotent.
+Each inference belongs to one model and has zero or more evaluation results, one
+row per metric. An experiment run adds one `experiment_runs` row linking the
+inference to its experiment (an inference has at most one such link). The unique
+key `(inference_id, metric_name, evaluator_name)` is what makes replay idempotent.
 
 ```mermaid
 erDiagram
     models ||--o{ inference : produces
+    models ||--o{ experiments : "configured for"
+    experiments ||--o{ experiment_runs : "recorded as"
+    inference ||--o| experiment_runs : "linked by"
     inference ||--o{ evaluation_results : "scored by"
+
+    experiment_runs {
+        uuid id PK
+        uuid experiment_id FK
+        uuid inference_id FK,UK
+        timestamptz created_at
+    }
 
     evaluation_results {
         uuid id PK

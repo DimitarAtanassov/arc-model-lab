@@ -5,6 +5,12 @@ APP := arc_model_lab
 sources := src
 lint_paths := src tests
 
+# Load a local .env (copied from .env.example) into the recipe environment for
+# the runtime and migration targets, so a single file configures the app and its
+# database. An absent .env is fine. Lint and test targets deliberately skip it to
+# stay hermetic and reproducible.
+load-dotenv = set -a; [ -f .env ] && . ./.env; set +a
+
 .DEFAULT_GOAL := help
 
 .PHONY: help ## Show this help
@@ -34,19 +40,20 @@ test: prepare
 
 .PHONY: migrate ## Apply database migrations to head (needs ARC_DATABASE_URL)
 migrate: prepare
-	uv run alembic upgrade head
+	$(load-dotenv); uv run alembic upgrade head
 
 .PHONY: migration ## Autogenerate a migration (NAME=description, needs ARC_DATABASE_URL)
 migration: prepare
-	uv run alembic revision --autogenerate -m "$(or $(NAME),change)"
+	$(load-dotenv); uv run alembic revision --autogenerate -m "$(or $(NAME),change)"
 
 .PHONY: downgrade ## Roll back the last migration (needs ARC_DATABASE_URL)
 downgrade: prepare
-	uv run alembic downgrade -1
+	$(load-dotenv); uv run alembic downgrade -1
 
 .PHONY: run ## Run the app locally with auto-reload
 run: prepare
-	uv run uvicorn $(APP).main:app --reload --reload-dir src --host 0.0.0.0 --port 8000
+	$(load-dotenv); uv run uvicorn $(APP).main:app --reload --reload-dir src \
+		--host "$${ARC_API_HOST:-0.0.0.0}" --port "$${ARC_API_PORT:-8000}"
 
 .PHONY: model.seed ## Seed the model catalog from seeds/models.local.json
 model.seed: prepare

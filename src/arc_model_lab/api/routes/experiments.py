@@ -54,7 +54,7 @@ def run_experiment(
     experiment_id: UUID, payload: ExperimentRunRequest, session: SessionDep, service: ServiceDep
 ) -> ExperimentRunResponse:
     result = service.run(session, experiment_id, payload.input_text, metrics=payload.metrics)
-    return ExperimentRunResponse.from_inference(result.inference, result.evaluation)
+    return ExperimentRunResponse.from_run(experiment_id, result.inference, result.evaluation)
 
 
 @router.get("/{experiment_id}/results", response_model=ExperimentResultsResponse)

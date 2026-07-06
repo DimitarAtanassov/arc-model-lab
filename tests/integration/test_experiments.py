@@ -1,9 +1,9 @@
 """Experiment repository and service round-trips against a real Postgres.
 
 Covers the mapping round-trip, the SQL aggregation, model validation on create,
-and that a run tags its inference with the experiment id. The model runtime is
-faked (no weight downloads) and evaluation is disabled, so these exercise the
-experiment engine, not arc-eval.
+and that a run links its inference to the experiment through experiment_runs. The
+model runtime is faked (no weight downloads) and evaluation is disabled, so these
+exercise the experiment engine, not arc-eval.
 """
 
 from __future__ import annotations
@@ -11,14 +11,16 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from arc_model_lab.config import Settings
-from arc_model_lab.db.models import ExperimentRecord
+from arc_model_lab.db.models import ExperimentRecord, ExperimentRunRecord
 from arc_model_lab.db.repositories import (
     EvaluationResultRepository,
     ExperimentRepository,
+    ExperimentRunRepository,
     InferenceRepository,
     ModelRepository,
 )
@@ -28,6 +30,7 @@ from arc_model_lab.domain import (
     Experiment,
     ExperimentNameConflictError,
     ExperimentNotFoundError,
+    ExperimentRun,
     GenerationConfig,
     Inference,
     Model,
@@ -120,7 +123,9 @@ def test_run_allows_an_inactive_model(db_session: Session, fake_model_service: M
 
     result = service.run(db_session, experiment.id, "summarize this")
 
-    assert result.inference.experiment_id == experiment.id
+    link = db_session.scalar(select(ExperimentRunRecord).where(ExperimentRunRecord.inference_id == result.inference.id))
+    assert link is not None
+    assert link.experiment_id == experiment.id
 
 
 def test_aggregate_scores_averages_by_metric(db_session: Session) -> None:
@@ -130,6 +135,7 @@ def test_aggregate_scores_averages_by_metric(db_session: Session) -> None:
     db_session.commit()
 
     inference_repo = InferenceRepository(db_session)
+    run_repo = ExperimentRunRepository(db_session)
     eval_repo = EvaluationResultRepository(db_session)
     for score in (0.6, 0.8):
         inference = inference_repo.add(
@@ -139,10 +145,10 @@ def test_aggregate_scores_averages_by_metric(db_session: Session) -> None:
                 prompt="p",
                 output_text="out",
                 latency_ms=1,
-                experiment_id=experiment.id,
             )
         )
         db_session.commit()
+        run_repo.add(ExperimentRun(experiment_id=experiment.id, inference_id=inference.id))
         eval_repo.upsert_many(
             [
                 EvaluationResult(
@@ -169,7 +175,7 @@ def test_create_rejects_unknown_model(db_session: Session, fake_model_service: M
         service.create(db_session, name="exp", model_name="does-not-exist", generation_config=_config())
 
 
-def test_run_tags_inference_with_experiment_id(db_session: Session, fake_model_service: ModelService) -> None:
+def test_run_links_inference_to_experiment(db_session: Session, fake_model_service: ModelService) -> None:
     model = _persist_model(db_session)
     service = _service(fake_model_service)
     experiment = _create(service, db_session, model.name)
@@ -177,10 +183,13 @@ def test_run_tags_inference_with_experiment_id(db_session: Session, fake_model_s
     result = service.run(db_session, experiment.id, "summarize this")
 
     assert result.evaluation is None
-    assert result.inference.experiment_id == experiment.id
+    # The inference is persisted; the experiment link lives in experiment_runs,
+    # not on the inference row.
     stored = InferenceRepository(db_session).get(result.inference.id)
     assert stored is not None
-    assert stored.experiment_id == experiment.id
+    link = db_session.scalar(select(ExperimentRunRecord).where(ExperimentRunRecord.inference_id == result.inference.id))
+    assert link is not None
+    assert link.experiment_id == experiment.id
 
 
 def test_get_by_name_round_trips(db_session: Session) -> None:

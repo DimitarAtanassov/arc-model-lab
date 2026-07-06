@@ -58,3 +58,7 @@ def run() -> None:
     """Console-script entrypoint that starts the ASGI server."""
     settings = get_settings()
     uvicorn.run("arc_model_lab.main:app", host=settings.api_host, port=settings.api_port)
+
+
+if __name__ == "__main__":
+    run()

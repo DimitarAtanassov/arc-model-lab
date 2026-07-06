@@ -4,17 +4,19 @@ Audience: backend engineers running or extending the service. Reading time: 5 mi
 
 A small, production-shaped service that loads a HuggingFace model, runs inference
 through a single endpoint (`POST /inference`), records every inference in
-Postgres, and can score each output through the `arc-eval` service.
+Postgres, groups reproducible runs as experiments, and can score each output
+through the `arc-eval` service.
 
-It stays intentionally small: three domain entities, one endpoint, clean module
-boundaries, and no speculative abstraction.
+It stays intentionally small: a compact domain, an inference endpoint and a small
+set of experiment endpoints, clean module boundaries, and no speculative
+abstraction.
 
 ## Architecture
 
 ```
 src/arc_model_lab/
 ├── api/          FastAPI routing layer (schemas, dependencies, routes)
-├── domain/       Pure data models (Model, Inference) — no framework imports
+├── domain/       Pure data models (Model, Inference, Experiment, EvaluationResult), no framework imports
 ├── services/     Business logic (model loading, inference workflow)
 ├── clients/      Outbound clients for external services (arc-eval)
 ├── db/           SQLAlchemy ORM models + repositories
@@ -92,7 +94,9 @@ Model weights download once into the `hf_cache` volume, never into the image.
 | --- | --- | --- |
 | `POST` | `/inference` | Run the model named by `model_name` on `input_text`; persists and returns one inference (no evaluation) |
 | `POST` | `/experiments` | Create a named run configuration (model + decoding) |
-| `POST` | `/experiments/{id}/run` | Run an experiment: infer, store, and (when `metrics` are named) evaluate |
+| `POST` | `/experiments/{id}/run` | Run an experiment: infer, store, link, and (when `metrics` are named) evaluate |
+| `GET` | `/experiments/{id}/results` | Aggregated scores for an experiment, per metric |
+| `GET` | `/experiments/{id}/compare/{other_id}` | Compare two experiments' scores side by side |
 | `GET` | `/health` | Liveness probe |
 | `GET` | `/docs` | Interactive OpenAPI docs |
 

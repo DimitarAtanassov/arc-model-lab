@@ -23,12 +23,21 @@ services:
     build: .
     container_name: arc-model-lab-api
     restart: unless-stopped
-    command: ["sh", "-c", "alembic upgrade head && python -m arc_model_lab.db.seed_models seeds/models.local.json && uvicorn arc_model_lab.main:app --host 0.0.0.0 --port 8000"]
+    # The app binds ARC_API_HOST/ARC_API_PORT (config.py) after migrating and
+    # seeding, so a single .env drives both the in-container bind and the
+    # published port below.
+    command: ["sh", "-c", "alembic upgrade head && python -m arc_model_lab.db.seed_models seeds/models.local.json && python -m arc_model_lab.main"]
+    env_file:
+      - path: .env
+        required: false
     environment:
+      # Inside the compose network the database is reached at `postgres`, not the
+      # localhost URL a .env carries for `make run`. This inline value wins over
+      # env_file, so it always targets the service.
       ARC_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-arc}:${POSTGRES_PASSWORD:-arc}@postgres:5432/${POSTGRES_DB:-arc_model_lab}
       HF_HOME: /var/cache/huggingface
     ports:
-      - "${ARC_API_PORT:-8000}:8000"
+      - "${ARC_API_PORT:-8000}:${ARC_API_PORT:-8000}"
     volumes:
       - hf_cache:/var/cache/huggingface
     depends_on:

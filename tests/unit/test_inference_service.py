@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock
-from uuid import uuid4
 
 import pytest
 from sqlalchemy.orm import Session
@@ -94,9 +93,7 @@ def test_summarize_rejects_oversized_input(fake_model_service: ModelService, mon
         service.summarize(MagicMock(spec=Session), model_name="m", input_text="x" * 60_000)
 
 
-def test_summarize_persists_inference_without_experiment_id(
-    fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_summarize_persists_inference(fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch) -> None:
     model = _model()
     _patch_model_repo(monkeypatch, model)
     added = _patch_inference_repo(monkeypatch)
@@ -106,29 +103,28 @@ def test_summarize_persists_inference_without_experiment_id(
     )
 
     assert inference.model_id == model.id
-    assert inference.experiment_id is None
     assert added
     assert added[0] is inference
 
 
-def test_run_for_experiment_tags_the_row(fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_for_experiment_uses_the_given_model(
+    fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
+) -> None:
     added = _patch_inference_repo(monkeypatch)
     model = _model()
-    experiment_id = uuid4()
 
     inference = InferenceService(fake_model_service).run_for_experiment(
         MagicMock(spec=Session),
         model=model,
         input_text="hello",
         config=_config(),
-        experiment_id=experiment_id,
     )
 
-    assert inference.experiment_id == experiment_id
     assert inference.model_id == model.id
-    # The experiment path resolves nothing by name; the model is passed in.
+    # The experiment path resolves nothing by name; the model is passed in and the
+    # inference carries no experiment reference.
     assert added
-    assert added[0].experiment_id == experiment_id
+    assert added[0] is inference
 
 
 def test_summarize_uses_server_default_config_when_temperature_omitted(

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from arc_model_lab.db.models import (
     EvaluationResultRecord,
     ExperimentRecord,
+    ExperimentRunRecord,
     InferenceRecord,
     ModelRecord,
 )
@@ -26,6 +27,7 @@ from arc_model_lab.domain import (
     Experiment,
     ExperimentMetricAggregate,
     ExperimentNameConflictError,
+    ExperimentRun,
     GenerationConfig,
     Inference,
     InvalidGenerationConfigError,
@@ -204,8 +206,9 @@ class ExperimentRepository:
     def aggregate_scores(self, experiment_id: UUID) -> list[ExperimentMetricAggregate]:
         """Average score and count per metric across the experiment's evaluations.
 
-        Aggregation is a plain SQL group-by, so comparison stays indexable and
-        needs no application-side joins.
+        Aggregation joins evaluation results to the experiment through the
+        ``experiment_runs`` association (not a column on inference), so comparison
+        stays indexable and needs no application-side joins.
         """
         stmt = (
             select(
@@ -213,8 +216,11 @@ class ExperimentRepository:
                 func.avg(EvaluationResultRecord.score).label("average_score"),
                 func.count().label("evaluated_count"),
             )
-            .join(InferenceRecord, InferenceRecord.id == EvaluationResultRecord.inference_id)
-            .where(InferenceRecord.experiment_id == experiment_id)
+            .join(
+                ExperimentRunRecord,
+                ExperimentRunRecord.inference_id == EvaluationResultRecord.inference_id,
+            )
+            .where(ExperimentRunRecord.experiment_id == experiment_id)
             .group_by(EvaluationResultRecord.metric_name)
             .order_by(EvaluationResultRecord.metric_name)
         )
@@ -227,6 +233,23 @@ class ExperimentRepository:
             )
             for row in rows
         ]
+
+
+class ExperimentRunRepository:
+    """Persists the association between an inference and its experiment.
+
+    Write-only: the read path for experiment runs is the aggregate join in
+    :meth:`ExperimentRepository.aggregate_scores`, so a per-row lookup is not
+    needed here.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, run: ExperimentRun) -> ExperimentRun:
+        self._session.add(_to_experiment_run_record(run))
+        self._session.flush()
+        return run
 
 
 def _to_model(record: ModelRecord) -> Model:
@@ -269,7 +292,6 @@ def _to_inference(record: InferenceRecord) -> Inference:
         latency_ms=record.latency_ms,
         prompt_tokens=record.prompt_tokens,
         completion_tokens=record.completion_tokens,
-        experiment_id=record.experiment_id,
         created_at=record.created_at,
     )
 
@@ -284,7 +306,6 @@ def _to_inference_record(inference: Inference) -> InferenceRecord:
         latency_ms=inference.latency_ms,
         prompt_tokens=inference.prompt_tokens,
         completion_tokens=inference.completion_tokens,
-        experiment_id=inference.experiment_id,
         created_at=inference.created_at,
     )
 
@@ -347,6 +368,15 @@ def _to_experiment_record(experiment: Experiment) -> ExperimentRecord:
         model_id=experiment.model_id,
         generation_config=experiment.generation_config.to_dict(),
         created_at=experiment.created_at,
+    )
+
+
+def _to_experiment_run_record(run: ExperimentRun) -> ExperimentRunRecord:
+    return ExperimentRunRecord(
+        id=run.id,
+        experiment_id=run.experiment_id,
+        inference_id=run.inference_id,
+        created_at=run.created_at,
     )
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -42,8 +41,10 @@ class InferenceService:
     -> 404; a non-active model is ``ModelInactiveError`` -> 409, so deactivating a
     model takes it out of online serving). Experiments instead pass an
     already-resolved model (bypassing the active gate on purpose, to evaluate
-    candidates), their generation config, and the experiment id to tag the row.
-    The commit happens here so a row is persisted before any success response.
+    candidates) and their generation config; the experiment-inference link is
+    recorded separately by ``ExperimentService``, so the inference row stays free
+    of any experiment reference. The commit happens here so a row is persisted
+    before any success response.
     """
 
     def __init__(self, model_service: ModelService) -> None:
@@ -66,7 +67,7 @@ class InferenceService:
         config = self._model_service.default_generation_config()
         if temperature is not None:
             config = replace(config, temperature=temperature)
-        return self._generate_and_store(session, model=model, input_text=input_text, config=config, experiment_id=None)
+        return self._generate_and_store(session, model=model, input_text=input_text, config=config)
 
     def run_for_experiment(
         self,
@@ -75,12 +76,13 @@ class InferenceService:
         model: Model,
         input_text: str,
         config: GenerationConfig,
-        experiment_id: UUID,
     ) -> Inference:
-        """Run one summarization for an experiment, tagging the row with its id."""
-        return self._generate_and_store(
-            session, model=model, input_text=input_text, config=config, experiment_id=experiment_id
-        )
+        """Run one summarization under an experiment's model and config.
+
+        The inference is stored with no experiment reference; ``ExperimentService``
+        records the experiment-inference association after this returns.
+        """
+        return self._generate_and_store(session, model=model, input_text=input_text, config=config)
 
     def _generate_and_store(
         self,
@@ -89,7 +91,6 @@ class InferenceService:
         model: Model,
         input_text: str,
         config: GenerationConfig,
-        experiment_id: UUID | None,
     ) -> Inference:
         if len(input_text) > _MAX_INPUT_CHARS:
             raise InputTooLargeError(f"Input exceeds {_MAX_INPUT_CHARS} characters")
@@ -105,7 +106,6 @@ class InferenceService:
             latency_ms=result.latency_ms,
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
-            experiment_id=experiment_id,
         )
         persisted = InferenceRepository(session).add(inference)
         session.commit()

@@ -1,8 +1,10 @@
 """Request/response contracts for the experiments endpoints.
 
 The run endpoint has its own response (:class:`ExperimentRunResponse`): a run
-produces one inference tagged with the experiment id and, when the run names
-metrics, its evaluation. ``/inference`` returns neither, which keeps the two
+produces one inference, links it to the experiment, and, when the run names
+metrics, evaluates it. The response carries the ``experiment_id`` from the run
+context, not from the inference (which is decoupled from experiments).
+``/inference`` returns neither the id nor an evaluation, which keeps the two
 endpoints orthogonal. ``GenerationConfigSchema`` forbids unknown keys, so a knob
 the runtime ignores (for example ``num_beams``) is rejected with 422 at the
 boundary rather than silently dropped.
@@ -92,7 +94,7 @@ class ExperimentRunRequest(BaseModel):
 
 
 class ExperimentRunResponse(BaseModel):
-    model_config = ConfigDict(protected_namespaces=(), from_attributes=True)
+    model_config = ConfigDict(protected_namespaces=())
 
     id: UUID  # noqa: A003 - mirrors the domain primary key
     model_id: UUID
@@ -102,21 +104,37 @@ class ExperimentRunResponse(BaseModel):
     latency_ms: int
     prompt_tokens: int | None
     completion_tokens: int | None
-    experiment_id: UUID | None
+    experiment_id: UUID
     created_at: datetime
     evaluation: EvaluationEnvelope | None = None
 
     @classmethod
-    def from_inference(cls, inference: Inference, evaluation: EvaluationOutcome | None = None) -> ExperimentRunResponse:
-        """Shape an experiment run: the tagged inference and its optional scores.
+    def from_run(
+        cls,
+        experiment_id: UUID,
+        inference: Inference,
+        evaluation: EvaluationOutcome | None = None,
+    ) -> ExperimentRunResponse:
+        """Shape an experiment run: its inference and, when scored, its evaluation.
 
-        Unlike ``/inference``, this response carries the ``experiment_id`` and the
-        evaluation, because a run always executes under an experiment.
+        The ``experiment_id`` comes from the run context, not the inference:
+        inference is decoupled from experiments and never carries one.
+        ``/inference`` returns neither this id nor an evaluation, which keeps the
+        two endpoints orthogonal.
         """
-        response = cls.model_validate(inference)
-        if evaluation is None:
-            return response
-        return response.model_copy(update={"evaluation": EvaluationEnvelope.from_outcome(evaluation)})
+        return cls(
+            id=inference.id,
+            model_id=inference.model_id,
+            input_text=inference.input_text,
+            prompt=inference.prompt,
+            output_text=inference.output_text,
+            latency_ms=inference.latency_ms,
+            prompt_tokens=inference.prompt_tokens,
+            completion_tokens=inference.completion_tokens,
+            experiment_id=experiment_id,
+            created_at=inference.created_at,
+            evaluation=EvaluationEnvelope.from_outcome(evaluation) if evaluation is not None else None,
+        )
 
 
 class MetricAggregateOut(BaseModel):
