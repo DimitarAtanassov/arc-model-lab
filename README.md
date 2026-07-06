@@ -28,13 +28,12 @@ domain layer depends on nothing but the standard library and Pydantic.
 
 ### Request flow (`POST /inference`)
 
-1. Accept `input_text` (and optional `metrics`).
+1. Accept `model_name`, `input_text`, and an optional `temperature`.
 2. Build chat messages (system + user) for the summarization task.
 3. Render the chat template and generate via the (pre-loaded) `ModelService`.
 4. Persist an `Inference` row (input, rendered prompt, output, tokens, latency).
-5. If the request named `metrics`, score the output through `arc-eval` and store
-   the results; otherwise skip scoring.
-6. Return the stored record, with any scores.
+5. Return the stored record. `/inference` never evaluates; scoring lives in
+   experiments and the evaluation CLI.
 
 ## Prerequisites
 
@@ -96,6 +95,9 @@ Model weights download once into the `hf_cache` volume, never into the image.
 | `POST` | `/experiments/{id}/run` | Run an experiment: infer, store, and (when `metrics` are named) evaluate |
 | `GET` | `/health` | Liveness probe |
 | `GET` | `/docs` | Interactive OpenAPI docs |
+
+New here? The [inference, evaluation, and experiments guide](docs/usage.md) walks
+through each with runnable, real-world examples.
 
 Summarize a document (the caller names the model and the decoding config):
 
