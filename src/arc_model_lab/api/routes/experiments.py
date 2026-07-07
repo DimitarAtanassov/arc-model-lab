@@ -41,7 +41,9 @@ def list_experiments(
     limit: Annotated[int, Query(ge=1, le=_MAX_LIMIT)] = _DEFAULT_LIMIT,
 ) -> list[ExperimentResponse]:
     """Return recent experiments, newest first (bounded page size)."""
-    return [ExperimentResponse.from_domain(view.experiment, view.model_name) for view in service.list_recent(session, limit)]
+    return [
+        ExperimentResponse.from_domain(view.experiment, view.model_name) for view in service.list_recent(session, limit)
+    ]
 
 
 @router.post("", response_model=ExperimentResponse, status_code=status.HTTP_201_CREATED)
