@@ -9,6 +9,10 @@ inference, then use an experiment to run the full loop: infer, store, score with
 The test sequence follows the request: **infer first, then experiments and
 evaluation**.
 
+> Prefer the browser? The same endpoints, with clean copy-paste JSON bodies for
+> the FastAPI `/docs` UI, are collected in
+> [Testing every endpoint from the `/docs` UI](#testing-every-endpoint-from-the-docs-ui).
+
 ## What you will run
 
 Two services on your machine, on separate ports so nothing clashes:
@@ -308,6 +312,166 @@ docker compose exec db psql -U arc -d arc_eval -c \
 The `inference_id` matches in both databases. That is the cross-service link:
 arc-model-lab sends its inference id as metadata, arc-eval stores it against its
 own score, and arc-model-lab keeps a lean local copy for aggregation.
+
+---
+
+## Testing every endpoint from the `/docs` UI
+
+FastAPI serves interactive API docs at <http://localhost:8000/docs>. This is the
+same test flow as the walkthrough above, driven from the browser instead of
+`curl`. Each endpoint has a **Try it out** button; paste the JSON body below into
+the request box and click **Execute**.
+
+The Swagger UI does not chain ids for you the way the `jq` script does. When a
+response returns an `id`, copy it and paste it into the path field (the boxes
+labeled `experiment_id`, `other_id`, or `inference_id`) of the next call. Work
+top to bottom and the ids line up.
+
+Setup A must be running for every call; scoring (the bodies with `metrics`) also
+needs Setup B. Valid metric names are `faithfulness`, `answer_relevance`, and
+`safety` (the arc-eval catalog).
+
+Every request body below reuses this article as the input text:
+
+```text
+The city council approved a plan to add 20 miles of protected bike lanes over the next three years, funded by a state transportation grant. Supporters say the lanes will cut commute times and reduce accidents; critics worry about reduced parking on main streets.
+```
+
+All eight endpoints, in the order to test them:
+
+| # | Method | Path | Body |
+| --- | --- | --- | --- |
+| 1 | GET | `/health` | none |
+| 2 | POST | `/inference` | yes |
+| 3 | POST | `/experiments` | yes |
+| 4 | GET | `/experiments/{experiment_id}` | none |
+| 5 | POST | `/experiments/{experiment_id}/run` | yes |
+| 6 | GET | `/experiments/{experiment_id}/results` | none |
+| 7 | GET | `/experiments/{experiment_id}/compare/{other_id}` | none |
+| 8 | POST | `/inference/{inference_id}/evaluate` | yes |
+
+### 1. GET `/health`
+
+No body. Click **Execute**. Expect `200` and:
+
+```json
+{ "status": "ok" }
+```
+
+### 2. POST `/inference`
+
+Runs the model and stores one row. Copy `id` from the response for step 8. The
+first call downloads the model weights and may take a minute.
+
+```json
+{
+  "model_name": "qwen2.5-1.5b-instruct",
+  "input_text": "The city council approved a plan to add 20 miles of protected bike lanes over the next three years, funded by a state transportation grant. Supporters say the lanes will cut commute times and reduce accidents; critics worry about reduced parking on main streets."
+}
+```
+
+Optional: set the sampling temperature (0.0 to 2.0; omit for the server default).
+
+```json
+{
+  "model_name": "qwen2.5-1.5b-instruct",
+  "input_text": "The city council approved a plan to add 20 miles of protected bike lanes over the next three years, funded by a state transportation grant. Supporters say the lanes will cut commute times and reduce accidents; critics worry about reduced parking on main streets.",
+  "temperature": 0.7
+}
+```
+
+Expect `201`. The response carries no `experiment_id` and no `evaluation`:
+`/inference` is pure inference.
+
+### 3. POST `/experiments`
+
+Creates an experiment. Copy `id` from the response; this is **experiment A** and
+feeds every `/experiments/{experiment_id}/...` call below.
+
+```json
+{
+  "name": "qwen-greedy",
+  "description": "Greedy decoding baseline",
+  "model_name": "qwen2.5-1.5b-instruct",
+  "generation_config": {
+    "temperature": 0.0,
+    "max_output_tokens": 256
+  }
+}
+```
+
+`description` and `generation_config` are optional; the config defaults to
+`temperature` 0.0 and `max_output_tokens` 256. Expect `201`.
+
+### 4. GET `/experiments/{experiment_id}`
+
+No body. Paste experiment A's id into `experiment_id`, then **Execute**. Expect
+`200` and the experiment you just created.
+
+### 5. POST `/experiments/{experiment_id}/run`
+
+Paste experiment A's id. **Without** `metrics`, the run infers and links to the
+experiment without calling arc-eval (works even without Setup B):
+
+```json
+{
+  "input_text": "The city council approved a plan to add 20 miles of protected bike lanes over the next three years, funded by a state transportation grant. Supporters say the lanes will cut commute times and reduce accidents; critics worry about reduced parking on main streets."
+}
+```
+
+Expect `201` with `experiment_id` set and `evaluation: null`.
+
+**With** `metrics`, the same call runs the full loop (infer, store, score, persist).
+Needs Setup B:
+
+```json
+{
+  "input_text": "The city council approved a plan to add 20 miles of protected bike lanes over the next three years, funded by a state transportation grant. Supporters say the lanes will cut commute times and reduce accidents; critics worry about reduced parking on main streets.",
+  "metrics": ["faithfulness", "answer_relevance"]
+}
+```
+
+Expect `201` with `evaluation.status` = `completed` and a score per metric. A
+`skipped`, `failed`, or empty `results` points at [Troubleshooting](#troubleshooting).
+
+### 6. GET `/experiments/{experiment_id}/results`
+
+No body. Paste experiment A's id. Expect `200` with each metric averaged across
+every scored run of the experiment.
+
+### 7. GET `/experiments/{experiment_id}/compare/{other_id}`
+
+First create **experiment B** with different decoding (POST `/experiments` again),
+so there is something to compare. Copy its `id`:
+
+```json
+{
+  "name": "qwen-creative",
+  "model_name": "qwen2.5-1.5b-instruct",
+  "generation_config": {
+    "temperature": 0.9,
+    "max_output_tokens": 256
+  }
+}
+```
+
+Run experiment B with scoring on the same input (the with-`metrics` body from step
+5, pasting experiment B's id). Then call compare: paste experiment A's id into
+`experiment_id` and experiment B's id into `other_id`. Expect `200` with both
+experiments' scores side by side.
+
+### 8. POST `/inference/{inference_id}/evaluate`
+
+Scores an inference that already exists. Paste the `id` from step 2 into
+`inference_id`. `metrics` is required and non-empty. Needs Setup B.
+
+```json
+{
+  "metrics": ["faithfulness", "answer_relevance"]
+}
+```
+
+Expect `200` with `status` = `completed` and a score per metric.
 
 ---
 

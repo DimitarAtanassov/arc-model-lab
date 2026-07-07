@@ -137,3 +137,15 @@ def test_run_response_includes_experiment_id(client: TestClient) -> None:
 
     assert response.status_code == 201, response.text
     assert response.json()["experiment_id"] == experiment["id"]
+
+
+def test_list_returns_created_experiments_with_model_names(client: TestClient) -> None:
+    _create(client, name="exp-1")
+    _create(client, name="exp-2")
+
+    response = client.get("/experiments")
+
+    assert response.status_code == 200
+    entries = response.json()
+    assert {entry["name"] for entry in entries} == {"exp-1", "exp-2"}
+    assert all(entry["model_name"] == _MODEL for entry in entries)

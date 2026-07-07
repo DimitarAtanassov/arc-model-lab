@@ -5,7 +5,12 @@ from __future__ import annotations
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-from arc_model_lab.api.dependencies import get_evaluation_service, get_inference_service, get_session
+from arc_model_lab.api.dependencies import (
+    get_evaluation_service,
+    get_inference_service,
+    get_model_catalog_service,
+    get_session,
+)
 
 
 def test_get_inference_service_reads_from_app_state() -> None:
@@ -20,6 +25,13 @@ def test_get_evaluation_service_reads_from_app_state() -> None:
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(evaluation_service=sentinel)))
 
     assert get_evaluation_service(request) is sentinel
+
+
+def test_get_model_catalog_service_reads_from_app_state() -> None:
+    sentinel = object()
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(model_catalog_service=sentinel)))
+
+    assert get_model_catalog_service(request) is sentinel
 
 
 def test_get_session_yields_request_scoped_session() -> None:

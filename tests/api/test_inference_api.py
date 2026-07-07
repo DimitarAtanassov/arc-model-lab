@@ -6,12 +6,17 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
-from arc_model_lab.db.repositories import ModelRepository
-from arc_model_lab.domain import Model, ModelStatus, Provider
+from arc_model_lab.db.repositories import (
+    EvaluationResultRepository,
+    InferenceRepository,
+    ModelRepository,
+)
+from arc_model_lab.domain import EvaluationResult, Inference, Model, ModelStatus, Provider
 
 pytestmark = pytest.mark.integration
 
 _MODEL = "test-model"
+_UNKNOWN_ID = "00000000-0000-0000-0000-000000000000"
 
 
 def _body(**overrides: object) -> dict[str, object]:
@@ -101,3 +106,83 @@ def test_inactive_model_returns_409(client: TestClient, session_factory: session
 
     response = client.post("/inference", json=_body(model_name="disabled"))
     assert response.status_code == 409
+
+
+def _persist_inference(
+    session_factory: sessionmaker[Session],
+    *,
+    input_text: str = "summarize me",
+    output_text: str = "fake summary",
+) -> Inference:
+    """Insert an inference against the seeded model, bypassing the HTTP surface."""
+    with session_factory() as session:
+        model = ModelRepository(session).require_by_name(_MODEL)
+        inference = InferenceRepository(session).add(
+            Inference(
+                model_id=model.id,
+                input_text=input_text,
+                prompt="p",
+                output_text=output_text,
+                latency_ms=5,
+            )
+        )
+        session.commit()
+        return inference
+
+
+def test_list_inferences_returns_the_created_inference(client: TestClient) -> None:
+    client.post("/inference", json=_body())
+
+    response = client.get("/inference")
+
+    assert response.status_code == 200
+    items = response.json()
+    assert len(items) == 1
+    assert items[0]["input_preview"] == "summarize me"
+    assert items[0]["output_preview"] == "fake summary"
+
+
+def test_list_inference_preview_truncates_long_text(client: TestClient, session_factory: sessionmaker[Session]) -> None:
+    _persist_inference(session_factory, input_text="word " * 100)
+
+    preview: str = client.get("/inference").json()[0]["input_preview"]
+
+    assert preview.endswith("\u2026")
+    assert len(preview) <= 160
+
+
+def test_get_inference_detail_includes_evaluation_scores(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    inference = _persist_inference(session_factory)
+    with session_factory() as session:
+        EvaluationResultRepository(session).upsert_many(
+            [
+                EvaluationResult(
+                    inference_id=inference.id,
+                    metric_name="faithfulness",
+                    score=0.75,
+                    evaluator_name="summary-faithfulness",
+                    evaluator_version="v1",
+                )
+            ]
+        )
+        session.commit()
+
+    body = client.get(f"/inference/{inference.id}").json()
+
+    assert body["output_text"] == "fake summary"
+    assert body["evaluations"] == [
+        {
+            "metric_name": "faithfulness",
+            "score": 0.75,
+            "reasoning": None,
+            "evaluator_name": "summary-faithfulness",
+            "evaluator_version": "v1",
+            "created_at": body["evaluations"][0]["created_at"],
+        }
+    ]
+
+
+def test_get_unknown_inference_returns_404(client: TestClient) -> None:
+    assert client.get(f"/inference/{_UNKNOWN_ID}").status_code == 404
