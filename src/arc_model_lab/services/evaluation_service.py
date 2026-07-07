@@ -11,6 +11,7 @@ client is wired for the environment the outcome is ``SKIPPED``.
 from __future__ import annotations
 
 import logging
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -20,20 +21,17 @@ from arc_model_lab.clients.arc_eval_client import (
     EvalMetricResult,
     EvalRequest,
 )
-from arc_model_lab.db.repositories import EvaluationResultRepository
+from arc_model_lab.db.repositories import EvaluationResultRepository, InferenceRepository
 from arc_model_lab.domain import (
     EvaluationError,
     EvaluationOutcome,
     EvaluationResult,
     EvaluationStatus,
     Inference,
+    InferenceNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
-
-# arc-model-lab produces summarization interactions today. Callers thread the
-# task type through explicitly (Experiments will vary it), defaulting to this.
-DEFAULT_TASK_TYPE = "summarization"
 
 
 class EvaluationService:
@@ -46,9 +44,7 @@ class EvaluationService:
         self,
         session: Session,
         inference: Inference,
-        metrics: list[str] | None = None,
-        *,
-        task_type: str = DEFAULT_TASK_TYPE,
+        metrics: list[str],
     ) -> EvaluationOutcome:
         """Score ``inference`` against ``metrics`` and persist the results.
 
@@ -62,7 +58,7 @@ class EvaluationService:
             return EvaluationOutcome(status=EvaluationStatus.SKIPPED)
 
         try:
-            response = self._client.evaluate(_build_request(inference, metrics, task_type))
+            response = self._client.evaluate(_build_request(inference, metrics))
         except EvaluationError:
             logger.warning(
                 "evaluation failed; failing open",
@@ -76,10 +72,23 @@ class EvaluationService:
         session.commit()
         return EvaluationOutcome(status=EvaluationStatus.COMPLETED, results=tuple(persisted))
 
+    def evaluate_inference_by_id(self, session: Session, inference_id: UUID, metrics: list[str]) -> EvaluationOutcome:
+        """Load the inference with ``inference_id`` and score it against ``metrics``.
 
-def _build_request(inference: Inference, metrics: list[str] | None, task_type: str) -> EvalRequest:
+        The standalone counterpart to an experiment run: it scores an inference
+        that already exists, with no experiment involved. Raises
+        :class:`InferenceNotFoundError` (404) when no inference has that id, then
+        delegates to :meth:`evaluate_inference`, so the skip, fail-open, and
+        unknown-metric behavior is identical.
+        """
+        inference = InferenceRepository(session).get(inference_id)
+        if inference is None:
+            raise InferenceNotFoundError(f"Inference not found: {inference_id}")
+        return self.evaluate_inference(session, inference, metrics)
+
+
+def _build_request(inference: Inference, metrics: list[str]) -> EvalRequest:
     return EvalRequest(
-        task_type=task_type,
         input_text=inference.input_text,
         output_text=inference.output_text,
         prompt=inference.prompt,

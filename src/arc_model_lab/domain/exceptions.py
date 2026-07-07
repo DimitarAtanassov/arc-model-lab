@@ -12,7 +12,12 @@ class ModelNotFoundError(DomainError):
 
 
 class ModelInactiveError(DomainError):
-    """The requested model exists but is not available for inference."""
+    """The requested model exists but is not active for online inference.
+
+    ``/inference`` serves only active models, so deactivating a model takes it out
+    of production serving (409). Experiments deliberately bypass this gate so a
+    candidate model can be evaluated before it is activated.
+    """
 
 
 class ModelLoadError(DomainError):
@@ -27,6 +32,10 @@ class InputTooLargeError(DomainError):
     """Input exceeds the maximum accepted size."""
 
 
+class InferenceNotFoundError(DomainError):
+    """The requested inference does not exist."""
+
+
 class EvaluationError(DomainError):
     """Calling the evaluation service failed or returned an unusable response."""
 
@@ -36,4 +45,30 @@ class UnknownMetricError(DomainError):
 
     Distinct from :class:`EvaluationError`: an unknown metric is a caller mistake
     (surfaced as 404), not an infrastructure failure that evaluation fails open on.
+    """
+
+
+class ExperimentNotFoundError(DomainError):
+    """The requested experiment does not exist."""
+
+
+class ExperimentNameConflictError(DomainError):
+    """An experiment with the requested name already exists."""
+
+
+class InvalidGenerationConfigError(DomainError):
+    """A generation config names an unknown knob or an invalid value.
+
+    A client-boundary validation error (422). Its read-path counterpart is
+    :class:`CorruptStoredDataError`: the same failure on data loaded from storage
+    is a server fault (500), not a client mistake.
+    """
+
+
+class CorruptStoredDataError(DomainError):
+    """Persisted data failed validation when read back into the domain.
+
+    A server-side data-integrity fault: the repository raises it when stored JSON
+    (for example an experiment's generation config) cannot be rebuilt, so it
+    surfaces as 500, unlike the 422 a client boundary returns for invalid input.
     """

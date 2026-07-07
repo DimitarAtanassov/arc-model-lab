@@ -2,10 +2,12 @@
 
 Audience: backend engineers working on persistence or migrations. Reading time: 6 minutes.
 
-The service persists three tables in PostgreSQL 16: `models` (the inference model
-catalog), `inference` (one row per executed inference), and `evaluation_results`
-(one metric score per row, written when a request asks for scoring). The schema is
-owned by Alembic migrations in `migrations/` and mirrored by the SQLAlchemy ORM in
+The service persists five tables in PostgreSQL 16: `models` (the inference model
+catalog), `inference` (one row per executed inference), `evaluation_results`
+(one metric score per row, written when an experiment run asks for scoring),
+`experiments` (a named, reusable run configuration), and `experiment_runs` (the
+link between an experiment and each inference it produced). The schema is owned by
+Alembic migrations in `migrations/` and mirrored by the SQLAlchemy ORM in
 `src/arc_model_lab/db/models.py`.
 
 ## Entity relationship diagram
@@ -13,7 +15,10 @@ owned by Alembic migrations in `migrations/` and mirrored by the SQLAlchemy ORM 
 ```mermaid
 erDiagram
     models ||--o{ inference : produces
+    models ||--o{ experiments : "configured for"
     inference ||--o{ evaluation_results : "scored by"
+    experiments ||--o{ experiment_runs : "recorded as"
+    inference ||--o| experiment_runs : "linked by"
 
     models {
         uuid id PK
@@ -48,6 +53,22 @@ erDiagram
         text reasoning "nullable"
         text evaluator_name
         text evaluator_version "nullable"
+        timestamptz created_at
+    }
+
+    experiments {
+        uuid id PK
+        varchar name UK
+        text description "nullable"
+        uuid model_id FK
+        jsonb generation_config
+        timestamptz created_at
+    }
+
+    experiment_runs {
+        uuid id PK
+        uuid experiment_id FK
+        uuid inference_id FK,UK
         timestamptz created_at
     }
 ```
@@ -135,6 +156,61 @@ inference updates the existing row for that metric and evaluator instead of addi
 a duplicate. `ON DELETE CASCADE` means deleting an inference also removes its
 scores, since a score has no meaning without the inference it describes.
 
+## Table: experiments
+
+A named, reusable run configuration: a model plus the decoding knobs a run should
+use. It holds no results itself; the outputs it produced are reached through
+`experiment_runs`.
+
+| Column | Type | Nullable | Default | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | uuid | no | application | Primary key, generated in the app with `uuid4` |
+| `name` | varchar(255) | no | | Unique, human-readable experiment name |
+| `description` | text | yes | null | Optional free-text description |
+| `model_id` | uuid | no | | Foreign key to `models.id`; the model under test |
+| `generation_config` | jsonb | no | | Decoding config (`temperature`, `max_output_tokens`) |
+| `created_at` | timestamptz | no | `now()` | Row creation time (DB default) |
+
+Constraints:
+
+- `pk_experiments` primary key on (`id`).
+- `uq_experiments_name` unique on (`name`).
+- `fk_experiments_model_id_models` foreign key (`model_id`) references
+  `models(id)` `ON DELETE RESTRICT`.
+
+An experiment targets a chosen model even if it is not active, so a candidate
+model can be evaluated before it is promoted. `RESTRICT` keeps the model row
+alive while any experiment references it.
+
+## Table: experiment_runs
+
+The link between an experiment and one inference it produced. It lives in its own
+table, not as a column on `inference`, so an inference never references an
+experiment: inference stays orthogonal to experiments. One row is written at the
+end of each experiment run.
+
+| Column | Type | Nullable | Default | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | uuid | no | application | Primary key, generated in the app with `uuid4` |
+| `experiment_id` | uuid | no | | Foreign key to `experiments.id` |
+| `inference_id` | uuid | no | | Foreign key to `inference.id`; unique |
+| `created_at` | timestamptz | no | `now()` | Row creation time (DB default) |
+
+Constraints:
+
+- `pk_experiment_runs` primary key on (`id`).
+- `fk_experiment_runs_experiment_id_experiments` foreign key (`experiment_id`)
+  references `experiments(id)` `ON DELETE CASCADE`.
+- `fk_experiment_runs_inference_id_inference` foreign key (`inference_id`)
+  references `inference(id)` `ON DELETE CASCADE`.
+- `uq_experiment_runs_inference_id` unique on (`inference_id`).
+- `ix_experiment_runs_experiment_id` index on (`experiment_id`).
+
+The unique `inference_id` means an inference belongs to at most one experiment
+run. Both foreign keys cascade: deleting an experiment or an inference removes the
+link row, never the inference itself (deleting an experiment leaves its inferences
+in place, only unlinked).
+
 ## Relationships
 
 `models` to `inference` is one to many. Every `inference` row references exactly
@@ -149,6 +225,15 @@ out from under the records it produced. To retire a model, set `status` to
 exactly one inference; an inference has zero or more scores, one per metric.
 Unlike the model relationship, this one cascades: deleting an inference removes
 its scores too.
+
+`models` to `experiments` is one to many, under the same `RESTRICT` rule: a model
+cannot be deleted while an experiment references it.
+
+`experiments` to `experiment_runs` is one to many; `inference` to
+`experiment_runs` is one to zero-or-one (the unique `inference_id`). An experiment
+run is the associative row that ties one experiment to one inference. Both sides
+cascade on delete, so removing an experiment or an inference clears the link rows
+without stranding them.
 
 ## Indexes
 
@@ -167,6 +252,10 @@ and `created_at` each have a b-tree index, alongside the unique key on
 (`inference_id`, `metric_name`, `evaluator_name`). These keep score-by-inference,
 score-by-metric, and time-window queries off sequential scans.
 
+`experiment_runs` carries the unique key on (`inference_id`) and a b-tree index on
+(`experiment_id`), the column the score aggregation joins on. `experiments`
+carries only its primary key and the unique name index.
+
 ## Migration lineage
 
 | Revision | File | Change |
@@ -174,6 +263,8 @@ score-by-metric, and time-window queries off sequential scans.
 | `0001_initial` | `migrations/versions/0001_initial.py` | Creates `models` and `inference` with primary keys and the `inference -> models` foreign key |
 | `0002_model_catalog_fields` | `migrations/versions/0002_model_catalog_fields.py` | Adds `models.revision`, `models.status`, `models.updated_at`, and the `ck_models_valid_status` check |
 | `0003_evaluation_results` | `migrations/versions/0003_evaluation_results.py` | Creates `evaluation_results` with its foreign key to `inference`, the unique key, and the read indexes |
+| `0004_experiments` | `migrations/versions/0004_experiments.py` | Creates `experiments` and (historically) a nullable `inference.experiment_id` |
+| `0005_experiment_runs` | `migrations/versions/0005_experiment_runs.py` | Adds `experiment_runs`, backfills existing links, and drops `inference.experiment_id` so inference no longer references experiments |
 
 Constraint names are deterministic because `Base.metadata` sets a naming
 convention in `src/arc_model_lab/db/base.py`. Keep it in place so autogenerated
@@ -190,6 +281,8 @@ cross that boundary.
 | `models` | `ModelRecord` | `Model` |
 | `inference` | `InferenceRecord` | `Inference` |
 | `evaluation_results` | `EvaluationResultRecord` | `EvaluationResult` |
+| `experiments` | `ExperimentRecord` | `Experiment` |
+| `experiment_runs` | `ExperimentRunRecord` | `ExperimentRun` |
 
 The domain entities and the service flow that writes these rows are described in
 [architecture.md](architecture.md).

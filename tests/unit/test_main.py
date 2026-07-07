@@ -63,7 +63,7 @@ def test_lifespan_closes_eval_client_and_disposes_engine(monkeypatch: pytest.Mon
     monkeypatch.setattr(main_module, "create_session_factory", lambda engine: object())
     monkeypatch.setattr(main_module, "ModelService", lambda settings: object())
     monkeypatch.setattr(main_module, "build_arc_eval_client", lambda settings: _DummyEvalClient())
-    monkeypatch.setattr(main_module, "InferenceService", lambda model_service, model_name: object())
+    monkeypatch.setattr(main_module, "InferenceService", lambda model_service: object())
     monkeypatch.setattr(main_module, "EvaluationService", lambda eval_client: object())
 
     app = create_app(Settings(database_url="postgresql://example/test"))
@@ -91,7 +91,7 @@ def test_lifespan_disposes_engine_without_eval_client(monkeypatch: pytest.Monkey
     monkeypatch.setattr(main_module, "create_session_factory", lambda engine: object())
     monkeypatch.setattr(main_module, "ModelService", lambda settings: object())
     monkeypatch.setattr(main_module, "build_arc_eval_client", lambda settings: None)
-    monkeypatch.setattr(main_module, "InferenceService", lambda model_service, model_name: object())
+    monkeypatch.setattr(main_module, "InferenceService", lambda model_service: object())
     monkeypatch.setattr(main_module, "EvaluationService", lambda eval_client: object())
 
     app = create_app(Settings(database_url="postgresql://example/test"))

@@ -52,7 +52,7 @@ def test_live_eval_persists_results(session_factory: sessionmaker[Session]) -> N
         )
         session.commit()
 
-        outcome = service.evaluate_inference(session, inference)
+        outcome = service.evaluate_inference(session, inference, ["faithfulness"])
 
         assert outcome.status is EvaluationStatus.COMPLETED
         assert EvaluationResultRepository(session).list_for_inference(inference.id)

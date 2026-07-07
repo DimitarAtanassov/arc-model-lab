@@ -31,4 +31,6 @@ ENV PATH="/app/.venv/bin:$PATH"
 USER app
 EXPOSE 8000
 
-CMD ["uvicorn", "arc_model_lab.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Bind host/port come from ARC_API_HOST / ARC_API_PORT (config.py), so a bare
+# `docker run` honors the same .env values the compose stack publishes.
+CMD ["python", "-m", "arc_model_lab.main"]

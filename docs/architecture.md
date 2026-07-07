@@ -5,11 +5,11 @@ Audience: backend engineers extending or operating the service. Reading time: 12
 ## Purpose
 
 `arc-model-lab` takes text, runs a local model, saves the result, and returns it.
-The public surface is one endpoint, `POST /inference`, backed by a small catalog
-of models. A request can also ask for its output to be scored: when it names one
-or more metrics, the service sends the output to `arc-eval` and stores the scores
-against the inference. Inference and scoring are separate steps with separate
-storage, so a scoring problem can never corrupt an inference record.
+The caller names the model and the decoding config on `POST /inference`, which is
+pure inference: it never scores its output. Scoring belongs to experiments, whose
+`run` infers, stores the inference, then sends the output to `arc-eval` when the
+run names metrics. Inference and scoring are separate steps with separate storage,
+so a scoring problem can never corrupt an inference record.
 
 ## Design principles
 
@@ -17,9 +17,11 @@ Simplicity. The service runs the smallest useful production shape. There is no
 provider abstraction, workflow engine, event bus, queue, or plugin framework.
 Abstractions appear only after a second concrete caller exists.
 
-Domain first. The two domain concepts, `Model` and `Inference`, match the
-language of the system. A `Model` is something the service can load and run. An
-`Inference` is one execution of a model against a prompt.
+Domain first. The domain concepts match the language of the system. A `Model` is
+something the service can load and run. An `Inference` is one execution of a model
+against a prompt. An `Experiment` is a named, fixed run configuration; an
+`ExperimentRun` links each inference back to the experiment that produced it; and
+an `EvaluationResult` is one quality score for one inference.
 
 Orthogonal ownership. Each module owns one concern and depends only inward.
 
@@ -27,7 +29,7 @@ Orthogonal ownership. Each module owns one concern and depends only inward.
 | --- | --- |
 | `api/` | HTTP request and response surface, error mapping |
 | `domain/` | Business entities, enums, and domain exceptions |
-| `services/` | Business workflows (model loading, inference) |
+| `services/` | Business workflows (model loading, inference, experiments, evaluation) |
 | `clients/` | Outbound clients for external services (arc-eval integration) |
 | `db/` | ORM models, session factory, repositories, seeding |
 | `cli/` | Operational catalog commands |
@@ -41,15 +43,20 @@ imports only the standard library.
 
 ```mermaid
 flowchart LR
-    Client[Client] --> API["FastAPI (POST /inference)"]
+    Client[Client] --> API["FastAPI (/inference, /experiments)"]
 
     API --> Inf[InferenceService]
+    API --> Exp[ExperimentService]
+    Exp --> Inf
+    Exp -. "when metrics named" .-> Eval[EvaluationService]
+    Exp --> ExpRepo[ExperimentRepository]
+    Exp --> RunRepo[ExperimentRunRepository]
+
     Inf --> Models[ModelRepository]
     Inf --> MS[ModelService]
     MS --> HF[HuggingFace Transformers]
     Inf --> InfRepo[InferenceRepository]
 
-    API -. "when metrics requested" .-> Eval[EvaluationService]
     Eval --> AEC[ArcEvalClient]
     AEC -->|HTTP| ArcEval[arc-eval service]
     Eval --> EvalRepo[EvaluationResultRepository]
@@ -57,13 +64,18 @@ flowchart LR
     Models --> DB[(Postgres)]
     InfRepo --> DB
     EvalRepo --> DB
+    ExpRepo --> DB
+    RunRepo --> DB
 ```
 
 `ModelService` keeps an in-process cache of loaded model runtimes and is created
-once at startup. `InferenceService` holds no per-request state and looks up the
-target model from the catalog on each call. `EvaluationService` runs only when a
-request names metrics; it calls `arc-eval` over HTTP after the inference is saved,
-so it never blocks or corrupts the inference result.
+once at startup. `InferenceService` holds no per-request state and resolves the
+model named in each request from the catalog. `EvaluationService` runs only in an
+experiment run that names metrics; it calls `arc-eval` over HTTP after the
+inference is saved, so it never blocks or corrupts the inference result.
+`ExperimentService` composes the two: it runs the experiment's model and config
+through `InferenceService`, scores through `EvaluationService` when the run names
+metrics, and records the experiment-to-inference link last.
 
 ## Domain model
 
@@ -101,6 +113,32 @@ class Inference:
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 ```
+
+`Experiment` and `ExperimentRun` (`src/arc_model_lab/domain/experiment.py`):
+
+```python
+@dataclass(frozen=True, slots=True)
+class Experiment:
+    name: str
+    model_id: UUID
+    generation_config: GenerationConfig
+    description: str | None = None
+    id: UUID = field(default_factory=uuid4)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass(frozen=True, slots=True)
+class ExperimentRun:
+    experiment_id: UUID
+    inference_id: UUID
+    id: UUID = field(default_factory=uuid4)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+```
+
+An `Experiment` is a reusable run configuration (a model plus a
+`GenerationConfig`). An `ExperimentRun` is the association written after each run:
+it points to the inference that run produced, so the inference itself never
+references an experiment.
 
 `EvaluationResult` (`src/arc_model_lab/domain/evaluation.py`):
 
@@ -149,13 +187,27 @@ returns the persisted domain entity.
 
 It does not touch HuggingFace internals or ORM types.
 
+### ExperimentService
+
+Owns the experiment workflow: create and fetch experiments, run one (infer with
+the experiment's model and config through `InferenceService`, score through
+`EvaluationService` when the run names metrics, then record the
+experiment-to-inference link through `ExperimentRunRepository`), and aggregate or
+compare scores with plain SQL. It commits the link last, so a run that reaches the
+caller has already persisted its inference and any scores.
+
+An experiment passes an already-resolved model to `InferenceService`, bypassing
+the active-model gate on purpose, so a candidate model can be evaluated before it
+is activated. Generation and scoring themselves are owned by `ModelService` and
+`EvaluationService`; `ExperimentService` only orchestrates.
+
 ### Repositories
 
-`ModelRepository`, `InferenceRepository`, and `EvaluationResultRepository`
-translate between ORM rows and domain entities. They accept and return domain
-objects only; ORM types never leak past this boundary. Transaction control
-belongs to the caller: the service commits, and the request-scoped session rolls
-back on error.
+`ModelRepository`, `InferenceRepository`, `EvaluationResultRepository`,
+`ExperimentRepository`, and `ExperimentRunRepository` translate between ORM rows
+and domain entities. They accept and return domain objects only; ORM types never
+leak past this boundary. Transaction control belongs to the caller: the service
+commits, and the request-scoped session rolls back on error.
 
 ### EvaluationService
 
@@ -204,8 +256,9 @@ sequenceDiagram
     API-->>Client: 201 Created
 ```
 
-When the request names metrics, evaluation runs after the commit shown above and
-adds its scores to the response. That path, and its failure modes, is in
+An experiment run reuses the sequence above (with the experiment's model and
+decoding config), then evaluates after the commit when the run names metrics and
+adds the scores to its response. That path, and its failure modes, is in
 [dataflow.md](dataflow.md).
 
 ## Persistence guarantee
@@ -227,10 +280,14 @@ message.
 | --- | --- | --- |
 | Empty `input_text` | Pydantic validation | 422 |
 | Input over 50,000 characters | `InputTooLargeError` | 413 |
-| Unknown model name | `ModelNotFoundError` | 404 |
-| Model not active | `ModelInactiveError` | 409 |
+| Unknown model referenced (by `/inference` or an experiment) | `ModelNotFoundError` | 404 |
+| Model not active (on `/inference`; experiments bypass this) | `ModelInactiveError` | 409 |
+| Unknown experiment referenced | `ExperimentNotFoundError` | 404 |
+| Unknown inference referenced (on evaluate) | `InferenceNotFoundError` | 404 |
+| Duplicate experiment name on create | `ExperimentNameConflictError` | 409 |
 | Weights or tokenizer fail to load | `ModelLoadError` | 503 |
 | Generation fails | `GenerationError` | 500 |
+| Corrupt stored data on read | `CorruptStoredDataError` | 500 |
 | Unknown evaluation metric (from arc-eval) | `UnknownMetricError` | 404 |
 | Success | | 201 |
 
@@ -245,7 +302,10 @@ the file without writing.
 
 The CLI (`src/arc_model_lab/cli/models.py`) supports `list`, `get`, `activate`,
 `deactivate`, and `smoke` (load a model and run one summary). `activate` and
-`deactivate` toggle `status`, which gates whether `/inference` will use a model.
+`deactivate` toggle `status` (`active`, `inactive`, `deprecated`), which gates
+online serving: `/inference` serves only active models (a non-active model is a
+409). Experiments deliberately bypass the gate so a candidate model can be
+evaluated before it is activated.
 
 ## Configuration
 
@@ -257,7 +317,7 @@ cached. See `.env.example` for the full set. Groups:
 - Default model identity: `ARC_MODEL_NAME`, `ARC_MODEL_PROVIDER`, `ARC_MODEL_ID`,
   `ARC_TOKENIZER_ID`, `ARC_ADAPTER_PATH`.
 - Compute device: `device` (`auto`, `cpu`, `mps`, `cuda`).
-- Generation: `ARC_MAX_INPUT_TOKENS`, `ARC_MAX_NEW_TOKENS`, `ARC_NUM_BEAMS`.
+- Generation: `ARC_MAX_INPUT_TOKENS`, `ARC_MAX_OUTPUT_TOKENS`, `ARC_TEMPERATURE`.
 - Server: `ARC_API_HOST`, `ARC_API_PORT`.
 - Evaluation (a separate `EvalSettings`, prefix `ARC_EVAL_`): `ARC_EVAL_SERVICE_URL`
   (empty disables scoring), `ARC_EVAL_TIMEOUT_SECONDS`.
@@ -272,8 +332,10 @@ blocking; synchronous route handlers run in the FastAPI threadpool, so the event
 loop is never blocked. No async database or task queue is introduced.
 
 `main.py` builds the app in `create_app` and wires singletons in the lifespan:
-the SQLAlchemy engine, session factory, `ModelService`, and `InferenceService`
-are attached to `app.state` at startup and disposed on shutdown.
+the SQLAlchemy engine, session factory, `ModelService`, `InferenceService`, the
+`arc-eval` client, and `EvaluationService` are attached to `app.state` at startup
+and disposed on shutdown. `ExperimentService` is composed per request from the
+inference and evaluation services.
 
 The image is a multi-stage `uv` build on `python:3.13-slim`, runs as a non-root
 user, and does not bake model weights. Weights download at first request into a
@@ -322,11 +384,12 @@ and deterministic. Coverage runs with branch coverage enabled.
 
 ## Deferred capabilities
 
-These are intentionally absent until a concrete need exists: experiments,
-datasets, prompt versioning, training runs, a model registry, multi-provider
-inference, async or streaming inference, an event bus, and OpenTelemetry tracing.
+These are intentionally absent until a concrete need exists: datasets, prompt
+versioning, training runs, a model registry, multi-provider inference, async or
+streaming inference, an event bus, and OpenTelemetry tracing.
 
-Evaluation is already here. An inference can be scored by `arc-eval` and its
-per-metric results stored (see [dataflow.md](dataflow.md)), which closed the first
+Inference and experiments are already here. `/inference` runs a named model and
+persists the result; an experiment run scores its output through `arc-eval` and
+stores the per-metric results (see [dataflow.md](dataflow.md)), closing the
 feedback loop: generate output, persist the inference, score it, persist the
 score.

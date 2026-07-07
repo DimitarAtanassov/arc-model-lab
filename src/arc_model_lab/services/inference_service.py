@@ -1,15 +1,25 @@
-"""Inference workflow: build chat messages, run the model, persist the result."""
+"""Inference execution: build chat messages, run the model, persist the result."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
+from uuid import UUID
+
 from sqlalchemy.orm import Session
 
-from arc_model_lab.db.repositories import InferenceRepository, ModelRepository
+from arc_model_lab.db.repositories import (
+    EvaluationResultRepository,
+    InferenceRepository,
+    ModelRepository,
+)
 from arc_model_lab.domain import (
+    EvaluationResult,
+    GenerationConfig,
     Inference,
+    InferenceNotFoundError,
     InputTooLargeError,
+    Model,
     ModelInactiveError,
-    ModelNotFoundError,
     ModelStatus,
 )
 from arc_model_lab.services.model_service import ChatMessage, ModelService
@@ -23,6 +33,14 @@ _SUMMARY_SYSTEM_PROMPT = (
 _SUMMARY_INSTRUCTION = "Summarize the following text:\n\n{text}"
 
 
+@dataclass(frozen=True, slots=True)
+class InferenceDetailView:
+    """One inference paired with its persisted evaluation scores, for the read API."""
+
+    inference: Inference
+    evaluations: list[EvaluationResult]
+
+
 def build_summary_messages(input_text: str) -> list[ChatMessage]:
     return [
         {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
@@ -31,30 +49,69 @@ def build_summary_messages(input_text: str) -> list[ChatMessage]:
 
 
 class InferenceService:
-    """Coordinates a single summarization request end to end.
+    """Runs one summarization request end to end and persists the result.
 
-    The model is resolved per request from the catalog by name. Unknown names
-    raise ``ModelNotFoundError``; non-active models raise ``ModelInactiveError``.
-    The commit happens here so a row is persisted before any success response.
+    The caller names the model: ``/inference`` passes a ``model_name`` that this
+    service resolves against the catalog (a missing name is ``ModelNotFoundError``
+    -> 404; a non-active model is ``ModelInactiveError`` -> 409, so deactivating a
+    model takes it out of online serving). Experiments instead pass an
+    already-resolved model (bypassing the active gate on purpose, to evaluate
+    candidates) and their generation config; the experiment-inference link is
+    recorded separately by ``ExperimentService``, so the inference row stays free
+    of any experiment reference. The commit happens here so a row is persisted
+    before any success response.
     """
 
-    def __init__(self, model_service: ModelService, default_model_name: str) -> None:
+    def __init__(self, model_service: ModelService) -> None:
         self._model_service = model_service
-        self._default_model_name = default_model_name
 
-    def summarize(self, session: Session, input_text: str, model_name: str | None = None) -> Inference:
+    def summarize(
+        self, session: Session, *, model_name: str, input_text: str, temperature: float | None = None
+    ) -> Inference:
+        """Resolve the named model and run one summarization for ``/inference``.
+
+        Decoding defaults to the server config (``ARC_TEMPERATURE`` and
+        ``ARC_MAX_OUTPUT_TOKENS``); a caller-supplied ``temperature`` overrides
+        only that knob. Output length is not caller-controlled here.
+
+        Raises :class:`ModelNotFoundError` (404) when no catalog model has that
+        name, :class:`ModelInactiveError` (409) when the model is not active, and
+        :class:`InputTooLargeError` (413) for an oversized payload.
+        """
+        model = self._resolve_model(session, model_name)
+        config = self._model_service.default_generation_config()
+        if temperature is not None:
+            config = replace(config, temperature=temperature)
+        return self._generate_and_store(session, model=model, input_text=input_text, config=config)
+
+    def run_for_experiment(
+        self,
+        session: Session,
+        *,
+        model: Model,
+        input_text: str,
+        config: GenerationConfig,
+    ) -> Inference:
+        """Run one summarization under an experiment's model and config.
+
+        The inference is stored with no experiment reference; ``ExperimentService``
+        records the experiment-inference association after this returns.
+        """
+        return self._generate_and_store(session, model=model, input_text=input_text, config=config)
+
+    def _generate_and_store(
+        self,
+        session: Session,
+        *,
+        model: Model,
+        input_text: str,
+        config: GenerationConfig,
+    ) -> Inference:
         if len(input_text) > _MAX_INPUT_CHARS:
             raise InputTooLargeError(f"Input exceeds {_MAX_INPUT_CHARS} characters")
 
-        name = model_name or self._default_model_name
-        model = ModelRepository(session).get_by_name(name)
-        if model is None:
-            raise ModelNotFoundError(f"Model not found: {name}")
-        if model.status != ModelStatus.ACTIVE:
-            raise ModelInactiveError(f"Model is not active: {name}")
-
         messages = build_summary_messages(input_text)
-        result = self._model_service.generate(model, messages)
+        result = self._model_service.generate(model, messages, config)
 
         inference = Inference(
             model_id=model.id,
@@ -68,3 +125,24 @@ class InferenceService:
         persisted = InferenceRepository(session).add(inference)
         session.commit()
         return persisted
+
+    def _resolve_model(self, session: Session, model_name: str) -> Model:
+        model = ModelRepository(session).require_by_name(model_name)
+        if model.status != ModelStatus.ACTIVE:
+            raise ModelInactiveError(f"Model is not active: {model_name}")
+        return model
+
+    def list_recent(self, session: Session, limit: int) -> list[Inference]:
+        """Return the most recent inferences for the history surface (bounded)."""
+        return InferenceRepository(session).list_recent(limit)
+
+    def get_detail(self, session: Session, inference_id: UUID) -> InferenceDetailView:
+        """Return one inference with its evaluation scores, or raise (404).
+
+        Raises :class:`InferenceNotFoundError` when no inference has that id.
+        """
+        inference = InferenceRepository(session).get(inference_id)
+        if inference is None:
+            raise InferenceNotFoundError(f"Inference not found: {inference_id}")
+        evaluations = EvaluationResultRepository(session).list_for_inference(inference_id)
+        return InferenceDetailView(inference=inference, evaluations=evaluations)

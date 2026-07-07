@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from arc_model_lab.domain.generation import DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_TEMPERATURE
+
 Device = Literal["auto", "cpu", "mps", "cuda"]
 
 
@@ -34,10 +36,12 @@ class Settings(BaseSettings):
     # too large for the MPS 4 GiB per-tensor limit, which aborts the process otherwise.
     device: Device = "cpu"
 
-    # Generation parameters
+    # Generation parameters. These are the server defaults for /inference and smoke
+    # runs; they default from the domain constants so "default decoding" has one
+    # definition. temperature 0 = greedy/deterministic; > 0 enables sampling.
     max_input_tokens: int = 1024
-    max_new_tokens: int = 256
-    num_beams: int = 4
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
+    temperature: float = DEFAULT_TEMPERATURE
 
     # HTTP server
     api_host: str = "0.0.0.0"  # noqa: S104 — bind all interfaces for containerized serving

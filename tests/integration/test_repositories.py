@@ -20,6 +20,7 @@ from arc_model_lab.domain import (
     EvaluationResult,
     Inference,
     Model,
+    ModelNotFoundError,
     ModelStatus,
     Provider,
 )
@@ -54,6 +55,16 @@ def _result(
 
 def test_get_by_name_returns_none_when_absent(db_session: Session) -> None:
     assert ModelRepository(db_session).get_by_name("ghost") is None
+
+
+def test_require_by_id_returns_model_or_raises(db_session: Session) -> None:
+    repo = ModelRepository(db_session)
+    model = repo.upsert(_model("present"))
+    db_session.commit()
+
+    assert repo.require_by_id(model.id).id == model.id
+    with pytest.raises(ModelNotFoundError):
+        repo.require_by_id(uuid4())
 
 
 def test_list_all_returns_models_ordered_by_name(db_session: Session) -> None:

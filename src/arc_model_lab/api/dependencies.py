@@ -9,8 +9,9 @@ from fastapi import Depends, Request
 from sqlalchemy.orm import Session, sessionmaker
 
 from arc_model_lab.services.evaluation_service import EvaluationService
+from arc_model_lab.services.experiment_service import ExperimentService
 from arc_model_lab.services.inference_service import InferenceService
-from arc_model_lab.services.inference_workflow import InferenceWorkflow
+from arc_model_lab.services.model_catalog_service import ModelCatalogService
 
 
 def get_session(request: Request) -> Iterator[Session]:
@@ -29,14 +30,19 @@ def get_inference_service(request: Request) -> InferenceService:
     return service
 
 
+def get_model_catalog_service(request: Request) -> ModelCatalogService:
+    service: ModelCatalogService = request.app.state.model_catalog_service
+    return service
+
+
 def get_evaluation_service(request: Request) -> EvaluationService:
     service: EvaluationService = request.app.state.evaluation_service
     return service
 
 
-def get_inference_workflow(
+def get_experiment_service(
     inference_service: Annotated[InferenceService, Depends(get_inference_service)],
     evaluation_service: Annotated[EvaluationService, Depends(get_evaluation_service)],
-) -> InferenceWorkflow:
-    """Compose the inference/evaluation use case from the shared services."""
-    return InferenceWorkflow(inference_service, evaluation_service)
+) -> ExperimentService:
+    """Compose the experiment use case from the shared inference and eval services."""
+    return ExperimentService(inference_service, evaluation_service)

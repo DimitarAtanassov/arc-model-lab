@@ -20,12 +20,13 @@ from arc_model_lab.api.dependencies import get_evaluation_service, get_inference
 from arc_model_lab.clients.arc_eval_client import ArcEvalClient
 from arc_model_lab.config import Settings
 from arc_model_lab.db.base import Base, create_engine_from_url, create_session_factory
-from arc_model_lab.db.models import EvaluationResultRecord, InferenceRecord, ModelRecord
+from arc_model_lab.db.models import EvaluationResultRecord, ExperimentRecord, InferenceRecord, ModelRecord
 from arc_model_lab.db.repositories import ModelRepository
-from arc_model_lab.domain import GenerationError, Model, ModelLoadError, Provider
+from arc_model_lab.domain import GenerationConfig, GenerationError, Model, ModelLoadError, Provider
 from arc_model_lab.main import create_app
 from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.inference_service import InferenceService
+from arc_model_lab.services.model_catalog_service import ModelCatalogService
 from arc_model_lab.services.model_service import ChatMessage, GenerationResult, ModelService
 
 _TEST_MODEL_NAME = "test-model"
@@ -34,7 +35,9 @@ _TEST_MODEL_NAME = "test-model"
 class FakeModelService(ModelService):
     """Model-runtime double: never loads weights, returns deterministic output."""
 
-    def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
+    def generate(
+        self, model: Model, messages: list[ChatMessage], config: GenerationConfig | None = None
+    ) -> GenerationResult:
         return GenerationResult(
             prompt="fake-prompt",
             output_text="fake summary",
@@ -47,14 +50,18 @@ class FakeModelService(ModelService):
 class FailingModelService(FakeModelService):
     """Model-runtime double whose generation always fails."""
 
-    def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
+    def generate(
+        self, model: Model, messages: list[ChatMessage], config: GenerationConfig | None = None
+    ) -> GenerationResult:
         raise GenerationError("boom")
 
 
 class ModelLoadFailingModelService(FakeModelService):
     """Model-runtime double whose weights never load (maps to HTTP 503)."""
 
-    def generate(self, model: Model, messages: list[ChatMessage]) -> GenerationResult:
+    def generate(
+        self, model: Model, messages: list[ChatMessage], config: GenerationConfig | None = None
+    ) -> GenerationResult:
         raise ModelLoadError("model temporarily unavailable")
 
 
@@ -73,14 +80,22 @@ def build_app(
     *,
     eval_client: ArcEvalClient | None = None,
 ) -> FastAPI:
-    """Build an app wired to a test session factory and a fake model runtime."""
+    """Build an app wired to a test session factory and a fake model runtime.
+
+    The catalog is seeded with one active model (``_TEST_MODEL_NAME``); an
+    ``/inference`` request names it. A request that names an absent model gets a
+    404 from the model lookup.
+    """
     app = create_app()
     app.state.session_factory = session_factory
     with session_factory() as session:
         ModelRepository(session).upsert(_test_model())
         session.commit()
-    app.dependency_overrides[get_inference_service] = lambda: InferenceService(model_service, _TEST_MODEL_NAME)
+    app.dependency_overrides[get_inference_service] = lambda: InferenceService(model_service)
     app.dependency_overrides[get_evaluation_service] = lambda: EvaluationService(eval_client)
+    # The catalog read service has no I/O seam to fake, so wire the real one into
+    # app state the way lifespan does; the read endpoints resolve it from there.
+    app.state.model_catalog_service = ModelCatalogService()
     return app
 
 
@@ -129,6 +144,9 @@ def _isolate_db(request: pytest.FixtureRequest) -> Iterator[None]:
         with factory() as session:
             session.execute(delete(EvaluationResultRecord))
             session.execute(delete(InferenceRecord))
+            # experiments references models via a RESTRICT FK, so it must be
+            # cleared before models or the delete below fails.
+            session.execute(delete(ExperimentRecord))
             session.execute(delete(ModelRecord))
             session.commit()
     return

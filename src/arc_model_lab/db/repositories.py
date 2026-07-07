@@ -9,12 +9,33 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from arc_model_lab.db.models import EvaluationResultRecord, InferenceRecord, ModelRecord
-from arc_model_lab.domain import EvaluationResult, Inference, Model, ModelStatus, Provider
+from arc_model_lab.db.models import (
+    EvaluationResultRecord,
+    ExperimentRecord,
+    ExperimentRunRecord,
+    InferenceRecord,
+    ModelRecord,
+)
+from arc_model_lab.domain import (
+    CorruptStoredDataError,
+    EvaluationResult,
+    Experiment,
+    ExperimentMetricAggregate,
+    ExperimentNameConflictError,
+    ExperimentRun,
+    GenerationConfig,
+    Inference,
+    InvalidGenerationConfigError,
+    Model,
+    ModelNotFoundError,
+    ModelStatus,
+    Provider,
+)
 
 
 class ModelRepository:
@@ -24,6 +45,24 @@ class ModelRepository:
     def get_by_name(self, name: str) -> Model | None:
         record = self._session.scalar(select(ModelRecord).where(ModelRecord.name == name))
         return _to_model(record) if record is not None else None
+
+    def get_by_id(self, model_id: UUID) -> Model | None:
+        record = self._session.get(ModelRecord, model_id)
+        return _to_model(record) if record is not None else None
+
+    def require_by_name(self, name: str) -> Model:
+        """Return the model with this name, or raise ``ModelNotFoundError`` (404)."""
+        model = self.get_by_name(name)
+        if model is None:
+            raise ModelNotFoundError(f"Model not found: {name}")
+        return model
+
+    def require_by_id(self, model_id: UUID) -> Model:
+        """Return the model with this id, or raise ``ModelNotFoundError`` (404)."""
+        model = self.get_by_id(model_id)
+        if model is None:
+            raise ModelNotFoundError(f"Model not found: {model_id}")
+        return model
 
     def add(self, model: Model) -> Model:
         self._session.add(_to_model_record(model))
@@ -91,6 +130,17 @@ class InferenceRepository:
         records = self._session.scalars(stmt).all()
         return [_to_inference(record) for record in records]
 
+    def list_recent(self, limit: int) -> list[Inference]:
+        """Return the most recent inferences, newest first (bounded page size).
+
+        Backs the history table. Ordering is by ``created_at`` descending; the
+        caller bounds ``limit`` so the collection is never unbounded.
+        """
+        records = self._session.scalars(
+            select(InferenceRecord).order_by(InferenceRecord.created_at.desc()).limit(limit)
+        ).all()
+        return [_to_inference(record) for record in records]
+
 
 class EvaluationResultRepository:
     def __init__(self, session: Session) -> None:
@@ -128,6 +178,96 @@ class EvaluationResultRepository:
             .order_by(EvaluationResultRecord.metric_name)
         ).all()
         return [_to_evaluation_result(record) for record in records]
+
+
+class ExperimentRepository:
+    # Names the DB-generated unique constraint (see the metadata naming
+    # convention in db.base) so a duplicate name is told apart from other
+    # integrity violations such as the model_id foreign key.
+    _NAME_CONSTRAINT = "uq_experiments_name"
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, experiment: Experiment) -> Experiment:
+        """Insert an experiment, mapping a duplicate name to a domain conflict.
+
+        The unique constraint is the authoritative guard (including against a
+        concurrent create); only that violation is a caller conflict. Any other
+        IntegrityError (for example the model_id foreign key) propagates unchanged
+        so it is never misreported as a name conflict.
+        """
+        self._session.add(_to_experiment_record(experiment))
+        try:
+            self._session.flush()
+        except IntegrityError as exc:
+            if _violates_constraint(exc, self._NAME_CONSTRAINT):
+                raise ExperimentNameConflictError(f"Experiment name already exists: {experiment.name}") from exc
+            raise
+        return experiment
+
+    def get(self, experiment_id: UUID) -> Experiment | None:
+        record = self._session.get(ExperimentRecord, experiment_id)
+        return _to_experiment(record) if record is not None else None
+
+    def get_by_name(self, name: str) -> Experiment | None:
+        record = self._session.scalar(select(ExperimentRecord).where(ExperimentRecord.name == name))
+        return _to_experiment(record) if record is not None else None
+
+    def list_recent(self, limit: int) -> list[Experiment]:
+        """Return the most recent experiments, newest first (bounded page size)."""
+        records = self._session.scalars(
+            select(ExperimentRecord).order_by(ExperimentRecord.created_at.desc()).limit(limit)
+        ).all()
+        return [_to_experiment(record) for record in records]
+
+    def aggregate_scores(self, experiment_id: UUID) -> list[ExperimentMetricAggregate]:
+        """Average score and count per metric across the experiment's evaluations.
+
+        Aggregation joins evaluation results to the experiment through the
+        ``experiment_runs`` association (not a column on inference), so comparison
+        stays indexable and needs no application-side joins.
+        """
+        stmt = (
+            select(
+                EvaluationResultRecord.metric_name,
+                func.avg(EvaluationResultRecord.score).label("average_score"),
+                func.count().label("evaluated_count"),
+            )
+            .join(
+                ExperimentRunRecord,
+                ExperimentRunRecord.inference_id == EvaluationResultRecord.inference_id,
+            )
+            .where(ExperimentRunRecord.experiment_id == experiment_id)
+            .group_by(EvaluationResultRecord.metric_name)
+            .order_by(EvaluationResultRecord.metric_name)
+        )
+        rows = self._session.execute(stmt).all()
+        return [
+            ExperimentMetricAggregate(
+                metric_name=row.metric_name,
+                average_score=float(row.average_score),
+                evaluated_count=int(row.evaluated_count),
+            )
+            for row in rows
+        ]
+
+
+class ExperimentRunRepository:
+    """Persists the association between an inference and its experiment.
+
+    Write-only: the read path for experiment runs is the aggregate join in
+    :meth:`ExperimentRepository.aggregate_scores`, so a per-row lookup is not
+    needed here.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, run: ExperimentRun) -> ExperimentRun:
+        self._session.add(_to_experiment_run_record(run))
+        self._session.flush()
+        return run
 
 
 def _to_model(record: ModelRecord) -> Model:
@@ -212,3 +352,59 @@ def _evaluation_result_values(result: EvaluationResult) -> dict[str, object]:
         "evaluator_version": result.evaluator_version,
         "created_at": result.created_at,
     }
+
+
+def _to_experiment(record: ExperimentRecord) -> Experiment:
+    return Experiment(
+        id=record.id,
+        name=record.name,
+        description=record.description,
+        model_id=record.model_id,
+        generation_config=_load_generation_config(record),
+        created_at=record.created_at,
+    )
+
+
+def _load_generation_config(record: ExperimentRecord) -> GenerationConfig:
+    """Rebuild the stored generation config, treating corruption as a server fault.
+
+    Stored config passed validation on write, so a failure reading it back is data
+    corruption, not a client error: re-raise as CorruptStoredDataError (500) rather
+    than let InvalidGenerationConfigError surface a read fault as a 422.
+    """
+    try:
+        return GenerationConfig.from_mapping(record.generation_config)
+    except InvalidGenerationConfigError as exc:
+        raise CorruptStoredDataError(f"Corrupt generation config for experiment {record.id}: {exc}") from exc
+
+
+def _to_experiment_record(experiment: Experiment) -> ExperimentRecord:
+    return ExperimentRecord(
+        id=experiment.id,
+        name=experiment.name,
+        description=experiment.description,
+        model_id=experiment.model_id,
+        generation_config=experiment.generation_config.to_dict(),
+        created_at=experiment.created_at,
+    )
+
+
+def _to_experiment_run_record(run: ExperimentRun) -> ExperimentRunRecord:
+    return ExperimentRunRecord(
+        id=run.id,
+        experiment_id=run.experiment_id,
+        inference_id=run.inference_id,
+        created_at=run.created_at,
+    )
+
+
+def _violates_constraint(error: IntegrityError, constraint: str) -> bool:
+    """True when the IntegrityError is a violation of the named DB constraint.
+
+    Reads the constraint name from the psycopg diagnostics so a unique-name
+    violation can be told apart from other integrity failures (for example a
+    foreign key). Falls back to False when the driver exposes no constraint name,
+    so an unclassifiable error is re-raised rather than mislabeled.
+    """
+    diagnostic = getattr(error.orig, "diag", None)
+    return bool(getattr(diagnostic, "constraint_name", None) == constraint)

@@ -5,6 +5,12 @@ APP := arc_model_lab
 sources := src
 lint_paths := src tests
 
+# Load a local .env (copied from .env.example) into the recipe environment for
+# the runtime and migration targets, so a single file configures the app and its
+# database. An absent .env is fine. Lint and test targets deliberately skip it to
+# stay hermetic and reproducible.
+load-dotenv = set -a; [ -f .env ] && . ./.env; set +a
+
 .DEFAULT_GOAL := help
 
 .PHONY: help ## Show this help
@@ -34,19 +40,20 @@ test: prepare
 
 .PHONY: migrate ## Apply database migrations to head (needs ARC_DATABASE_URL)
 migrate: prepare
-	uv run alembic upgrade head
+	$(load-dotenv); uv run alembic upgrade head
 
 .PHONY: migration ## Autogenerate a migration (NAME=description, needs ARC_DATABASE_URL)
 migration: prepare
-	uv run alembic revision --autogenerate -m "$(or $(NAME),change)"
+	$(load-dotenv); uv run alembic revision --autogenerate -m "$(or $(NAME),change)"
 
 .PHONY: downgrade ## Roll back the last migration (needs ARC_DATABASE_URL)
 downgrade: prepare
-	uv run alembic downgrade -1
+	$(load-dotenv); uv run alembic downgrade -1
 
 .PHONY: run ## Run the app locally with auto-reload
 run: prepare
-	uv run uvicorn $(APP).main:app --reload --reload-dir src --host 0.0.0.0 --port 8000
+	$(load-dotenv); uv run uvicorn $(APP).main:app --reload --reload-dir src \
+		--host "$${ARC_API_HOST:-0.0.0.0}" --port "$${ARC_API_PORT:-8000}"
 
 .PHONY: model.seed ## Seed the model catalog from seeds/models.local.json
 model.seed: prepare
@@ -99,3 +106,38 @@ eval.contract: prepare
 .PHONY: eval.smoke ## Run the end-to-end eval smoke test (needs ARC_EVAL_SERVICE_URL + arc-eval)
 eval.smoke: prepare
 	uv run pytest -m eval_smoke
+
+.PHONY: exp.create ## Create an experiment (NAME=, MODEL=)
+exp.create: prepare
+	uv run python -m arc_model_lab.cli.experiments create --name $(NAME) --model-name $(MODEL)
+
+.PHONY: exp.run ## Run an experiment against sample input (ID=, TEXT=)
+exp.run: prepare
+	uv run python -m arc_model_lab.cli.experiments run --experiment-id $(ID) --input-text "$(TEXT)"
+
+.PHONY: exp.compare ## Compare two experiments by id (ID=, OTHER=)
+exp.compare: prepare
+	uv run python -m arc_model_lab.cli.experiments compare --experiment-id $(ID) --other-id $(OTHER)
+
+.PHONY: exp.smoke ## Create/run/score one experiment and verify aggregates (MODEL=, TEXT=, METRIC=)
+exp.smoke: prepare
+	@MODEL_NAME="$(or $(MODEL),$(ARC_MODEL_NAME))"; \
+	if [ -z "$$MODEL_NAME" ]; then \
+		echo "Set MODEL=<model-name> or ARC_MODEL_NAME in the environment."; \
+		exit 2; \
+	fi; \
+	INPUT_TEXT="$(or $(TEXT),The quick brown fox jumps over the lazy dog.)"; \
+	METRIC_NAME="$(or $(METRIC),faithfulness)"; \
+	EXP_NAME="smoke-$$(date +%s)"; \
+	EXP_ID="$$(uv run python -m arc_model_lab.cli.experiments create --name "$$EXP_NAME" --model-name "$$MODEL_NAME" | awk -F '\t' 'NR==1 {print $$1}')"; \
+	if [ -z "$$EXP_ID" ]; then \
+		echo "Failed to create experiment."; \
+		exit 1; \
+	fi; \
+	uv run python -m arc_model_lab.cli.experiments run --experiment-id "$$EXP_ID" --input-text "$$INPUT_TEXT" --metrics "$$METRIC_NAME" >/dev/null; \
+	COMPARE_OUTPUT="$$(uv run python -m arc_model_lab.cli.experiments compare --experiment-id "$$EXP_ID" --other-id "$$EXP_ID")"; \
+	echo "$$COMPARE_OUTPUT"; \
+	echo "$$COMPARE_OUTPUT" | grep -qv "(no scores)" || { \
+		echo "No aggregate scores found. Ensure ARC_EVAL_SERVICE_URL is set and metric '$$METRIC_NAME' exists in arc-eval."; \
+		exit 1; \
+	}
