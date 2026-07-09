@@ -65,7 +65,10 @@ class InferenceRunRequest(BaseModel):
     model_name: str = Field(min_length=1, description="Catalog model to run.")
     input_text: str = Field(min_length=1, description="Text to summarize.")
     generation_config: GenerationConfigSchema = Field(default_factory=GenerationConfigSchema)
-    allow_inactive: bool = Field(default=True, description="Run the model even if it is not active.")
+    allow_inactive: bool = Field(
+        default=False,
+        description="Run the model even if it is not active. Off by default so the endpoint fails closed.",
+    )
 
 
 class InferenceResponse(BaseModel):

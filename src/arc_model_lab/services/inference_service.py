@@ -121,7 +121,7 @@ class InferenceService:
         """Return the most recent inferences for the history surface (bounded)."""
         return await InferenceRepository(session).list_recent(limit)
 
-    async def get_detail(self, session: AsyncSession, inference_id: UUID) -> Inference:
+    async def get(self, session: AsyncSession, inference_id: UUID) -> Inference:
         """Return one inference by id, or raise InferenceNotFoundError (404)."""
         inference = await InferenceRepository(session).get(inference_id)
         if inference is None:

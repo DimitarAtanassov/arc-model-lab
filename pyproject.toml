@@ -91,6 +91,7 @@ addopts = "--strict-markers --strict-config"
 asyncio_mode = "auto"
 markers = [
     "integration: exercises a real database via testcontainers",
+    "contract: verifies the /v1/inference:run wire contract with arc-eval-service",
 ]
 
 [tool.coverage.run]

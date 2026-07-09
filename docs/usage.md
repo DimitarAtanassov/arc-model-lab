@@ -86,8 +86,9 @@ curl -s http://localhost:8000/v1/inference:run \
   }'
 ```
 
-`allow_inactive` defaults to `true` on this endpoint; `generation_config` defaults
-to the server decoding config when omitted.
+`allow_inactive` defaults to `false` (the endpoint fails closed, like `/inference`);
+arc-eval-service opts in by sending `allow_inactive: true`. `generation_config`
+defaults to the server decoding config when omitted.
 
 ## Manage the catalog
 

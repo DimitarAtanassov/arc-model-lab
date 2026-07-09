@@ -5,8 +5,17 @@ Revises: 0005_experiment_runs
 Create Date: 2026-07-08 00:00:00
 
 Experimentation and evaluation move to arc-eval-service; arc-model-lab is pure
-model serving. This drops the three tables it no longer owns. The downgrade
-recreates them empty (the migrated rows are not restored here).
+model serving. This drops the three tables it no longer owns: experiment_runs,
+experiments, and evaluation_results.
+
+Rollout ordering (a contract step, run it deliberately):
+- Deploy the code that stops reading these tables BEFORE running this migration.
+  During a rolling deploy an old instance still serving the removed /experiments
+  and /inference/{id}/evaluate routes would hit dropped tables and error, so run
+  this as a discrete post-deploy step, never on app boot.
+- This is destructive and not data-reversible. downgrade() recreates the tables
+  empty for schema reversibility only; the rows are NOT restored. Export anything
+  worth keeping first (arc-eval-service owns the authoritative copy).
 
 """
 
@@ -26,16 +35,20 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.drop_index("ix_experiment_runs_experiment_id", table_name="experiment_runs")
+    # Fail fast rather than queue behind a long-running query and block every
+    # request that arrives after us; the runner retries on lock_timeout.
+    op.execute("SET lock_timeout = '4s'")
+    op.execute("SET statement_timeout = '1min'")
+    # DROP TABLE removes each table's own indexes, so they are not dropped
+    # explicitly. Drop children before parents to respect the foreign keys.
     op.drop_table("experiment_runs")
     op.drop_table("experiments")
-    op.drop_index("ix_evaluation_results_created_at", table_name="evaluation_results")
-    op.drop_index("ix_evaluation_results_metric_name", table_name="evaluation_results")
-    op.drop_index("ix_evaluation_results_inference_id", table_name="evaluation_results")
     op.drop_table("evaluation_results")
 
 
 def downgrade() -> None:
+    op.execute("SET lock_timeout = '4s'")
+    op.execute("SET statement_timeout = '1min'")
     op.create_table(
         "evaluation_results",
         sa.Column("id", sa.Uuid(), nullable=False),

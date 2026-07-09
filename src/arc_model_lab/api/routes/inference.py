@@ -46,6 +46,10 @@ async def run_inference(
     Used by arc-eval-service to run an experiment's model, which may be inactive.
     Returns 404 for an unknown model and 409 for an inactive model when
     allow_inactive is false.
+
+    Path-versioned (``/v1/...:run``) to mark the versioned service-to-service seam,
+    distinct from the unversioned public ``/inference`` surface, so the contract
+    with arc-eval-service can evolve independently.
     """
     inference = await service.run_named(
         session,
@@ -70,4 +74,4 @@ async def list_inferences(
 @router.get("/inference/{inference_id}", response_model=InferenceResponse)
 async def get_inference(inference_id: UUID, session: SessionDep, service: ServiceDep) -> InferenceResponse:
     """Return one inference by id, or 404 when absent."""
-    return InferenceResponse.from_inference(await service.get_detail(session, inference_id))
+    return InferenceResponse.from_inference(await service.get(session, inference_id))

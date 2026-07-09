@@ -153,6 +153,18 @@ async def test_run_unknown_model_returns_404(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
+async def test_run_defaults_to_active_only_when_allow_inactive_omitted(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    # allow_inactive defaults to False: omitting it fails closed on an inactive model.
+    await _inactive_model(session_factory, "candidate3")
+    response = await client.post(
+        "/v1/inference:run",
+        json={"model_name": "candidate3", "input_text": "hi"},
+    )
+    assert response.status_code == 409
+
+
 async def _persist_inference(
     session_factory: async_sessionmaker[AsyncSession],
     *,

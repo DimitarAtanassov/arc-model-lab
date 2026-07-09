@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -17,16 +18,6 @@ def _model(name: str, *, model_id: str = "org/model", status: ModelStatus = Mode
 
 async def test_get_by_name_returns_none_when_absent(db_session: AsyncSession) -> None:
     assert await ModelRepository(db_session).get_by_name("ghost") is None
-
-
-async def test_require_by_id_returns_model_or_raises(db_session: AsyncSession) -> None:
-    repo = ModelRepository(db_session)
-    model = await repo.upsert(_model("present"))
-    await db_session.commit()
-
-    assert (await repo.require_by_id(model.id)).id == model.id
-    with pytest.raises(ModelNotFoundError):
-        await repo.require_by_id(uuid4())
 
 
 async def test_require_by_name_raises_when_absent(db_session: AsyncSession) -> None:
@@ -67,10 +58,6 @@ async def test_set_status_returns_none_when_absent(db_session: AsyncSession) -> 
     assert await ModelRepository(db_session).set_status("ghost", ModelStatus.INACTIVE) is None
 
 
-async def test_get_by_id_returns_none_when_absent(db_session: AsyncSession) -> None:
-    assert await ModelRepository(db_session).get_by_id(uuid4()) is None
-
-
 async def test_inference_add_and_get_round_trip(db_session: AsyncSession) -> None:
     await ModelRepository(db_session).add(_model("m"))
     model = await ModelRepository(db_session).get_by_name("m")
@@ -97,16 +84,31 @@ async def test_inference_add_and_get_round_trip(db_session: AsyncSession) -> Non
 async def test_inference_list_recent_orders_newest_first(db_session: AsyncSession) -> None:
     model = await ModelRepository(db_session).upsert(_model("m"))
     repo = InferenceRepository(db_session)
-    first = Inference(model_id=model.id, input_text="a", prompt="p", output_text="o", latency_ms=1)
-    second = Inference(model_id=model.id, input_text="b", prompt="p", output_text="o", latency_ms=1)
-    await repo.add(first)
-    await repo.add(second)
+    # Distinct created_at so the ordering is deterministic and actually asserted;
+    # rows written in one transaction would otherwise share now() and tie.
+    older = Inference(
+        model_id=model.id,
+        input_text="a",
+        prompt="p",
+        output_text="o",
+        latency_ms=1,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    newer = Inference(
+        model_id=model.id,
+        input_text="b",
+        prompt="p",
+        output_text="o",
+        latency_ms=1,
+        created_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    await repo.add(older)
+    await repo.add(newer)
     await db_session.commit()
 
     recent = await repo.list_recent(10)
 
-    assert {inference.id for inference in recent} == {first.id, second.id}
-    assert len(recent) == 2
+    assert [inference.id for inference in recent] == [newer.id, older.id]
 
 
 async def test_inference_get_returns_none_when_absent(db_session: AsyncSession) -> None:

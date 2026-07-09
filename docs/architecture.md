@@ -204,7 +204,7 @@ message.
 | Unknown model referenced | `ModelNotFoundError` | 404 |
 | Model not active (`/inference`, or `/v1/inference:run` without `allow_inactive`) | `ModelInactiveError` | 409 |
 | Unknown inference referenced (on read) | `InferenceNotFoundError` | 404 |
-| Invalid generation config | `InvalidGenerationConfigError` | 422 |
+| Invalid generation config (domain guard; the request schema returns 422 first) | `InvalidGenerationConfigError` | 422 |
 | Weights or tokenizer fail to load | `ModelLoadError` | 503 |
 | Generation fails | `GenerationError` | 500 |
 | Success | | 201 |

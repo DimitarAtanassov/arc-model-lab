@@ -23,22 +23,11 @@ class ModelRepository:
         record = await self._session.scalar(select(ModelRecord).where(ModelRecord.name == name))
         return _to_model(record) if record is not None else None
 
-    async def get_by_id(self, model_id: UUID) -> Model | None:
-        record = await self._session.get(ModelRecord, model_id)
-        return _to_model(record) if record is not None else None
-
     async def require_by_name(self, name: str) -> Model:
         """Return the model with this name, or raise ModelNotFoundError (404)."""
         model = await self.get_by_name(name)
         if model is None:
             raise ModelNotFoundError(f"Model not found: {name}")
-        return model
-
-    async def require_by_id(self, model_id: UUID) -> Model:
-        """Return the model with this id, or raise ModelNotFoundError (404)."""
-        model = await self.get_by_id(model_id)
-        if model is None:
-            raise ModelNotFoundError(f"Model not found: {model_id}")
         return model
 
     async def add(self, model: Model) -> Model:
