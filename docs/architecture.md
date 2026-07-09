@@ -314,9 +314,10 @@ variables with the `ARC_` prefix and an optional `.env`. `get_settings()` is
 cached. See `.env.example` for the full set. Groups:
 
 - Database: `ARC_DATABASE_URL`, `ARC_DB_ECHO`.
-- Default model identity: `ARC_MODEL_NAME`, `ARC_MODEL_PROVIDER`, `ARC_MODEL_ID`,
-  `ARC_TOKENIZER_ID`, `ARC_ADAPTER_PATH`.
-- Compute device: `device` (`auto`, `cpu`, `mps`, `cuda`).
+- Default model: `ARC_MODEL_NAME` resolves a catalog model by name; weights cache
+  at `ARC_MODEL_CACHE_DIR`. Model identity (provider, ids, adapter) lives in the
+  catalog, not settings.
+- Compute device: `ARC_DEVICE` (`auto`, `cpu`, `mps`, `cuda`).
 - Generation: `ARC_MAX_INPUT_TOKENS`, `ARC_MAX_OUTPUT_TOKENS`, `ARC_TEMPERATURE`.
 - Server: `ARC_API_HOST`, `ARC_API_PORT`.
 - Evaluation (a separate `EvalSettings`, prefix `ARC_EVAL_`): `ARC_EVAL_SERVICE_URL`

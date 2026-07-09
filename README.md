@@ -231,12 +231,14 @@ All settings are environment variables with the `ARC_` prefix (see
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `ARC_DATABASE_URL` | `postgresql+psycopg://arc:arc@localhost:5432/arc_model_lab` | Postgres connection URL |
-| `ARC_MODEL_ID` | `Qwen/Qwen2.5-1.5B-Instruct` | HuggingFace causal instruct model to load |
-| `ARC_TOKENIZER_ID` | `Qwen/Qwen2.5-1.5B-Instruct` | HuggingFace tokenizer to load |
-| `ARC_MODEL_NAME` | `qwen2.5-1.5b-instruct` | Registered name (unique key) |
+| `ARC_DB_ECHO` | `false` | Echo SQL to logs (debugging only) |
+| `ARC_MODEL_NAME` | `qwen2.5-1.5b-instruct` | Default catalog model resolved by name |
+| `ARC_MODEL_CACHE_DIR` | (unset) | HuggingFace weight cache dir; unset uses the HF default |
+| `ARC_DEVICE` | `cpu` | Compute device: `auto`, `cpu`, `mps`, `cuda` |
 | `ARC_MAX_INPUT_TOKENS` | `1024` | Input truncation length |
 | `ARC_MAX_OUTPUT_TOKENS` | `256` | Default generated token budget |
 | `ARC_TEMPERATURE` | `0.0` | Default sampling temperature: 0 = greedy, up to 2.0 |
+| `ARC_API_HOST` | `0.0.0.0` | HTTP bind address |
 | `ARC_API_PORT` | `8000` | HTTP server port |
 | `ARC_EVAL_SERVICE_URL` | (empty) | arc-eval base URL; empty disables evaluation |
 | `ARC_EVAL_TIMEOUT_SECONDS` | `30` | arc-eval request timeout (seconds) |
