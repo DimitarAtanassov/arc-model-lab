@@ -53,15 +53,6 @@ class ModelRepository:
         await self._session.refresh(record)
         return _to_model(record)
 
-    async def set_status(self, name: str, status: ModelStatus) -> Model | None:
-        record = await self._session.scalar(select(ModelRecord).where(ModelRecord.name == name))
-        if record is None:
-            return None
-        record.status = status
-        await self._session.flush()
-        await self._session.refresh(record)
-        return _to_model(record)
-
 
 class InferenceRepository:
     def __init__(self, session: AsyncSession) -> None:

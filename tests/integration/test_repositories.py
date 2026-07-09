@@ -44,20 +44,6 @@ async def test_upsert_inserts_then_updates_without_duplicating(db_session: Async
     assert len(await repo.list_all()) == 1
 
 
-async def test_set_status_updates_existing_model(db_session: AsyncSession) -> None:
-    repo = ModelRepository(db_session)
-    await repo.add(_model("m", status=ModelStatus.ACTIVE))
-
-    updated = await repo.set_status("m", ModelStatus.DEPRECATED)
-
-    assert updated is not None
-    assert updated.status is ModelStatus.DEPRECATED
-
-
-async def test_set_status_returns_none_when_absent(db_session: AsyncSession) -> None:
-    assert await ModelRepository(db_session).set_status("ghost", ModelStatus.INACTIVE) is None
-
-
 async def test_inference_add_and_get_round_trip(db_session: AsyncSession) -> None:
     await ModelRepository(db_session).add(_model("m"))
     model = await ModelRepository(db_session).get_by_name("m")

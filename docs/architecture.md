@@ -35,7 +35,6 @@ Orthogonal ownership. Each module owns one concern and depends only inward.
 | `domain/` | Business entities, enums, and domain exceptions |
 | `services/` | Business workflows (model loading, inference) |
 | `db/` | ORM models, session factory, repositories, seeding |
-| `cli/` | Operational catalog commands |
 | `config.py` | Environment-driven settings |
 | `main.py` | Composition root: lifespan wiring and the ASGI app |
 
@@ -211,19 +210,18 @@ message.
 
 ## Model catalog and operations
 
-The catalog is seeded from JSON and managed from a CLI, so no model coordinates
-are hardcoded in the request path.
+The catalog is seeded from JSON, so no model coordinates are hardcoded in the
+request path.
 
 Seeding (`src/arc_model_lab/db/seed_models.py`) reads `seeds/models.local.json`
 and performs an idempotent upsert keyed by `name`. The `--check` flag validates
 the file without writing.
 
-The CLI (`src/arc_model_lab/cli/models.py`) supports `list`, `get`, `activate`,
-`deactivate`, and `smoke` (load a model and run one summary). `activate` and
-`deactivate` toggle `status`, which gates online serving: `/inference` serves only
-active models (a non-active model is a 409). `/v1/inference:run` can bypass the
-gate with `allow_inactive`, so arc-eval-service can score a candidate before it is
-activated.
+Each model carries a `status` (`active`, `inactive`, `deprecated`) set by its seed
+entry, which gates online serving: `/inference` serves only active models (a
+non-active model is a 409). Change a model's status by editing its seed entry and
+re-running the seed. `/v1/inference:run` can bypass the gate with `allow_inactive`,
+so arc-eval-service can score a candidate before it is activated.
 
 ## Configuration
 
@@ -263,7 +261,7 @@ API waits for it.
 
 | Layer | Location | Focus |
 | --- | --- | --- |
-| Unit | `tests/unit/` | Prompt construction, domain, the inference service with fakes, config, CLI, seeding, error boundary |
+| Unit | `tests/unit/` | Prompt construction, domain, the inference service with fakes, config, seeding, error boundary |
 | Integration | `tests/integration/` | Repositories and the online path against real Postgres |
 | API | `tests/api/` | `/inference`, `/v1/inference:run`, and the model endpoints: happy path and each error mapping |
 

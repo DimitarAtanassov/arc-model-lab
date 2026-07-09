@@ -129,15 +129,10 @@ optional: pass it (0 is greedy and deterministic, higher samples) to override, o
 omit it to use the server default (`ARC_TEMPERATURE`). Output length is not a
 caller knob; it always uses the server default (`ARC_MAX_OUTPUT_TOKENS`).
 
-Inspect and manage the catalog from the CLI:
-
-```bash
-make model.list                                 # list registered models
-make model.get NAME=qwen2.5-1.5b-instruct       # show one model
-make model.smoke NAME=qwen2.5-1.5b-instruct     # load + run one summary
-make model.activate NAME=gemma-3-1b-it          # allow /inference to serve it
-make model.deactivate NAME=gemma-3-1b-it        # take it out of /inference (409)
-```
+Models are registered by seeding, and each carries a `status` (`active`,
+`inactive`, or `deprecated`); `/inference` serves only `active` models. To change a
+model's status, edit its entry in `seeds/models.local.json` and re-run
+`make model.seed` (an idempotent upsert keyed by name).
 
 ## Common tasks
 
@@ -148,7 +143,6 @@ Run `make help` for the full list. Most-used targets:
 | `make run` | Run the API locally with auto-reload |
 | `make migrate` | Apply migrations to head |
 | `make model.seed` | Seed the catalog from `seeds/models.local.json` |
-| `make model.list` | List registered models |
 | `make test` | Run tests with coverage |
 | `make lint` | Ruff format check, Ruff lint, mypy |
 

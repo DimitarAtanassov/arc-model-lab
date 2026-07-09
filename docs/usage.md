@@ -23,13 +23,13 @@ The service is running and the catalog is seeded (see the
 
 ```bash
 curl -s http://localhost:8000/health        # -> {"status":"ok"}
-make model.list                             # names you can pass as model_name
 ```
 
 The model you name on `/inference` must be **active**. An unknown name returns
-`404`; an inactive one returns `409`. Activate one with `make model.activate NAME=...`.
+`404`; an inactive one returns `409`. The seed file (`seeds/models.local.json`) sets
+each model's status; change it there and re-run `make model.seed`.
 
-Examples below use `qwen2.5-1.5b-instruct`; swap in a name from `make model.list`.
+Examples below use `qwen2.5-1.5b-instruct` (from `seeds/models.local.json`).
 
 ## Run an inference
 
@@ -92,20 +92,17 @@ defaults to the server decoding config when omitted.
 
 ## Manage the catalog
 
-```bash
-make model.list                                 # list registered models
-make model.get NAME=qwen2.5-1.5b-instruct       # show one model
-make model.smoke NAME=qwen2.5-1.5b-instruct     # load + run one summary
-make model.activate NAME=gemma-3-1b-it          # allow /inference to serve it
-make model.deactivate NAME=gemma-3-1b-it        # take it out of /inference (409)
-```
+The catalog is defined in `seeds/models.local.json` and applied with
+`make model.seed` (an idempotent upsert keyed by name). Each entry sets the model's
+`status`; `/inference` serves only `active` models. To add, retire, or re-activate a
+model, edit that file and re-run `make model.seed`.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `404` model not found | Name not in the catalog | `make model.list`, then `make model.seed` |
-| `409` model is not active | Model deactivated | `make model.activate NAME=...`, or call `/v1/inference:run` with `allow_inactive` |
+| `404` model not found | Name not in the catalog | `make model.seed` (registers the seed models) |
+| `409` model is not active | Model status is not `active` | Set `status` to `active` in `seeds/models.local.json` and re-run `make model.seed`, or call `/v1/inference:run` with `allow_inactive` |
 | `413` too large | Input over 50,000 characters | Shorten the input |
 | `422` invalid body | Missing field, or a stale `metrics`/`max_output_tokens` on `/inference` | `/inference` takes only `model_name`, `input_text`, and optional `temperature` |
 

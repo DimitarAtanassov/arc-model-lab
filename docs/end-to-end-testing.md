@@ -43,7 +43,8 @@ docker compose up -d postgres                 # Postgres on :5432
 uv sync                                        # create the venv
 make migrate                                   # apply schema (loads .env)
 make model.seed                                # seed the model catalog
-make model.list                                # confirm: qwen2.5-1.5b-instruct, gemma-3-1b-it
+docker compose exec postgres psql -U arc -d arc_model_lab -c \
+  "SELECT name, status FROM models;"           # confirm: qwen2.5-1.5b-instruct, gemma-3-1b-it
 ```
 
 In **Terminal A**, start the server and leave it running:
@@ -117,7 +118,8 @@ curl -s localhost:8000/v1/inference:run \
 then confirm `/v1/inference:run` still runs it with `allow_inactive`.
 
 ```bash
-make model.deactivate NAME=gemma-3-1b-it
+docker compose exec postgres psql -U arc -d arc_model_lab -c \
+  "UPDATE models SET status='inactive' WHERE name='gemma-3-1b-it';"
 
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8000/inference \
   -H 'content-type: application/json' \
@@ -127,7 +129,8 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8000/v1/inference:run \
   -H 'content-type: application/json' \
   -d '{"model_name":"gemma-3-1b-it","input_text":"hi","allow_inactive":true}'   # -> 201
 
-make model.activate NAME=gemma-3-1b-it
+docker compose exec postgres psql -U arc -d arc_model_lab -c \
+  "UPDATE models SET status='active' WHERE name='gemma-3-1b-it';"
 ```
 
 ### 6. Verify the rows in the database
@@ -145,8 +148,8 @@ in the lab: those live in arc-eval-service.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `404` on `/inference` | Model name not in the catalog | `make model.list`, then `make model.seed` |
-| `409` on `/inference` | Model is not active | `make model.activate NAME=...` |
+| `404` on `/inference` | Model name not in the catalog | `make model.seed` (registers the seed models) |
+| `409` on `/inference` | Model is not active | Set `status` to `active` in `seeds/models.local.json`, then `make model.seed` |
 | First inference is slow | Weights downloading on first use | Wait; later calls are fast |
 | `413` too large | Input over 50,000 characters | Shorten the input |
 

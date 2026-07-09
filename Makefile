@@ -63,26 +63,6 @@ model.seed: prepare
 model.validate: prepare
 	uv run python -m arc_model_lab.db.seed_models --check seeds/models.local.json
 
-.PHONY: model.list ## List catalog models
-model.list: prepare
-	uv run python -m arc_model_lab.cli.models list
-
-.PHONY: model.get ## Show one model (NAME=...)
-model.get: prepare
-	uv run python -m arc_model_lab.cli.models get --name $(NAME)
-
-.PHONY: model.activate ## Activate a model (NAME=...)
-model.activate: prepare
-	uv run python -m arc_model_lab.cli.models activate --name $(NAME)
-
-.PHONY: model.deactivate ## Deactivate a model (NAME=...)
-model.deactivate: prepare
-	uv run python -m arc_model_lab.cli.models deactivate --name $(NAME)
-
-.PHONY: model.smoke ## Load a model and run a summary (NAME=...)
-model.smoke: prepare
-	uv run python -m arc_model_lab.cli.models smoke --name $(NAME)
-
 .PHONY: model.clear-cache ## Remove the local HuggingFace cache
 model.clear-cache:
 	rm -rf .cache/huggingface
