@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session, sessionmaker
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from arc_model_lab.db.repositories import (
     EvaluationResultRepository,
@@ -25,75 +25,77 @@ def _body(**overrides: object) -> dict[str, object]:
     return body
 
 
-def test_valid_request_returns_201(client: TestClient) -> None:
-    response = client.post("/inference", json=_body())
+async def test_valid_request_returns_201(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body())
     assert response.status_code == 201
 
 
-def test_response_omits_experiment_id_and_evaluation(client: TestClient) -> None:
+async def test_response_omits_experiment_id_and_evaluation(client: AsyncClient) -> None:
     # /inference is pure inference: no experiment id, no scores in the response.
-    body = client.post("/inference", json=_body()).json()
+    body = (await client.post("/inference", json=_body())).json()
     assert "experiment_id" not in body
     assert "evaluation" not in body
 
 
-def test_empty_input_returns_422(client: TestClient) -> None:
-    response = client.post("/inference", json=_body(input_text=""))
+async def test_empty_input_returns_422(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body(input_text=""))
     assert response.status_code == 422
 
 
-def test_missing_model_name_returns_422(client: TestClient) -> None:
-    response = client.post("/inference", json={"input_text": "hi"})
+async def test_missing_model_name_returns_422(client: AsyncClient) -> None:
+    response = await client.post("/inference", json={"input_text": "hi"})
     assert response.status_code == 422
 
 
-def test_unknown_model_returns_404(client: TestClient) -> None:
-    response = client.post("/inference", json=_body(model_name="does-not-exist"))
+async def test_unknown_model_returns_404(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body(model_name="does-not-exist"))
     assert response.status_code == 404
 
 
-def test_temperature_out_of_range_returns_422(client: TestClient) -> None:
-    response = client.post("/inference", json=_body(temperature=5.0))
+async def test_temperature_out_of_range_returns_422(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body(temperature=5.0))
     assert response.status_code == 422
 
 
-def test_explicit_temperature_is_accepted(client: TestClient) -> None:
+async def test_explicit_temperature_is_accepted(client: AsyncClient) -> None:
     # Temperature is an optional caller override; a valid value is honored.
-    response = client.post("/inference", json=_body(temperature=0.7))
+    response = await client.post("/inference", json=_body(temperature=0.7))
     assert response.status_code == 201
 
 
-def test_metrics_field_is_rejected(client: TestClient) -> None:
+async def test_metrics_field_is_rejected(client: AsyncClient) -> None:
     # Evaluation moved out of /inference; a stale metrics field is forbidden.
-    response = client.post("/inference", json=_body(metrics=["faithfulness"]))
+    response = await client.post("/inference", json=_body(metrics=["faithfulness"]))
     assert response.status_code == 422
 
 
-def test_max_output_tokens_field_is_rejected(client: TestClient) -> None:
+async def test_max_output_tokens_field_is_rejected(client: AsyncClient) -> None:
     # Output length is a server default now, not a caller knob on /inference.
-    response = client.post("/inference", json=_body(max_output_tokens=128))
+    response = await client.post("/inference", json=_body(max_output_tokens=128))
     assert response.status_code == 422
 
 
-def test_oversized_input_returns_413(client: TestClient) -> None:
-    response = client.post("/inference", json=_body(input_text="x" * 60_000))
+async def test_oversized_input_returns_413(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body(input_text="x" * 60_000))
     assert response.status_code == 413
 
 
-def test_generation_failure_returns_500(failing_client: TestClient) -> None:
-    response = failing_client.post("/inference", json=_body())
+async def test_generation_failure_returns_500(failing_client: AsyncClient) -> None:
+    response = await failing_client.post("/inference", json=_body())
     assert response.status_code == 500
 
 
-def test_model_load_failure_returns_503(model_load_failing_client: TestClient) -> None:
-    response = model_load_failing_client.post("/inference", json=_body())
+async def test_model_load_failure_returns_503(model_load_failing_client: AsyncClient) -> None:
+    response = await model_load_failing_client.post("/inference", json=_body())
     assert response.status_code == 503
 
 
-def test_inactive_model_returns_409(client: TestClient, session_factory: sessionmaker[Session]) -> None:
+async def test_inactive_model_returns_409(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
     # Deactivating a model takes it out of /inference serving (409), the safety lever.
-    with session_factory() as session:
-        ModelRepository(session).upsert(
+    async with session_factory() as session:
+        await ModelRepository(session).upsert(
             Model(
                 name="disabled",
                 provider=Provider.HUGGINGFACE,
@@ -102,22 +104,22 @@ def test_inactive_model_returns_409(client: TestClient, session_factory: session
                 status=ModelStatus.INACTIVE,
             )
         )
-        session.commit()
+        await session.commit()
 
-    response = client.post("/inference", json=_body(model_name="disabled"))
+    response = await client.post("/inference", json=_body(model_name="disabled"))
     assert response.status_code == 409
 
 
-def _persist_inference(
-    session_factory: sessionmaker[Session],
+async def _persist_inference(
+    session_factory: async_sessionmaker[AsyncSession],
     *,
     input_text: str = "summarize me",
     output_text: str = "fake summary",
 ) -> Inference:
     """Insert an inference against the seeded model, bypassing the HTTP surface."""
-    with session_factory() as session:
-        model = ModelRepository(session).require_by_name(_MODEL)
-        inference = InferenceRepository(session).add(
+    async with session_factory() as session:
+        model = await ModelRepository(session).require_by_name(_MODEL)
+        inference = await InferenceRepository(session).add(
             Inference(
                 model_id=model.id,
                 input_text=input_text,
@@ -126,14 +128,14 @@ def _persist_inference(
                 latency_ms=5,
             )
         )
-        session.commit()
+        await session.commit()
         return inference
 
 
-def test_list_inferences_returns_the_created_inference(client: TestClient) -> None:
-    client.post("/inference", json=_body())
+async def test_list_inferences_returns_the_created_inference(client: AsyncClient) -> None:
+    await client.post("/inference", json=_body())
 
-    response = client.get("/inference")
+    response = await client.get("/inference")
 
     assert response.status_code == 200
     items = response.json()
@@ -142,21 +144,23 @@ def test_list_inferences_returns_the_created_inference(client: TestClient) -> No
     assert items[0]["output_preview"] == "fake summary"
 
 
-def test_list_inference_preview_truncates_long_text(client: TestClient, session_factory: sessionmaker[Session]) -> None:
-    _persist_inference(session_factory, input_text="word " * 100)
+async def test_list_inference_preview_truncates_long_text(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    await _persist_inference(session_factory, input_text="word " * 100)
 
-    preview: str = client.get("/inference").json()[0]["input_preview"]
+    preview: str = (await client.get("/inference")).json()[0]["input_preview"]
 
     assert preview.endswith("\u2026")
     assert len(preview) <= 160
 
 
-def test_get_inference_detail_includes_evaluation_scores(
-    client: TestClient, session_factory: sessionmaker[Session]
+async def test_get_inference_detail_includes_evaluation_scores(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
-    inference = _persist_inference(session_factory)
-    with session_factory() as session:
-        EvaluationResultRepository(session).upsert_many(
+    inference = await _persist_inference(session_factory)
+    async with session_factory() as session:
+        await EvaluationResultRepository(session).upsert_many(
             [
                 EvaluationResult(
                     inference_id=inference.id,
@@ -167,9 +171,9 @@ def test_get_inference_detail_includes_evaluation_scores(
                 )
             ]
         )
-        session.commit()
+        await session.commit()
 
-    body = client.get(f"/inference/{inference.id}").json()
+    body = (await client.get(f"/inference/{inference.id}")).json()
 
     assert body["output_text"] == "fake summary"
     assert body["evaluations"] == [
@@ -184,5 +188,5 @@ def test_get_inference_detail_includes_evaluation_scores(
     ]
 
 
-def test_get_unknown_inference_returns_404(client: TestClient) -> None:
-    assert client.get(f"/inference/{_UNKNOWN_ID}").status_code == 404
+async def test_get_unknown_inference_returns_404(client: AsyncClient) -> None:
+    assert (await client.get(f"/inference/{_UNKNOWN_ID}")).status_code == 404

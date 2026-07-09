@@ -7,8 +7,7 @@ real Postgres; ``_smoke`` fakes ``ModelService`` so no weights are loaded.
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import Engine
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from arc_model_lab.cli import models as cli
 from arc_model_lab.config import Settings
@@ -25,17 +24,17 @@ class _FakeService:
         return GenerationResult(prompt="p", output_text="SMOKE OUT", prompt_tokens=1, completion_tokens=1, latency_ms=1)
 
 
-def _seed(
-    session: Session, *, name: str, model_id: str = "org/model", status: ModelStatus = ModelStatus.ACTIVE
+async def _seed(
+    session: AsyncSession, *, name: str, model_id: str = "org/model", status: ModelStatus = ModelStatus.ACTIVE
 ) -> None:
-    ModelRepository(session).upsert(
+    await ModelRepository(session).upsert(
         Model(name=name, provider=Provider.HUGGINGFACE, model_id=model_id, tokenizer_id=model_id, status=status)
     )
-    session.commit()
+    await session.commit()
 
 
 @pytest.fixture
-def _cli_db(engine: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+def _cli_db(engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the CLI's own session factory at the test container."""
     url = engine.url.render_as_string(hide_password=False)
     monkeypatch.setattr(cli, "get_settings", lambda: Settings(database_url=url))
@@ -58,7 +57,11 @@ def test_main_dispatches_to_handler(
     monkeypatch: pytest.MonkeyPatch, argv: list[str], handler: str, expected_args: tuple[object, ...]
 ) -> None:
     calls: list[tuple[object, ...]] = []
-    monkeypatch.setattr(cli, handler, lambda *args: calls.append(args))
+
+    async def _capture(*args: object) -> None:
+        calls.append(args)
+
+    monkeypatch.setattr(cli, handler, _capture)
 
     cli.main(argv)
 
@@ -73,7 +76,11 @@ def test_main_activate_deactivate_sets_status(
     monkeypatch: pytest.MonkeyPatch, command: str, expected_status: ModelStatus
 ) -> None:
     calls: list[tuple[object, ...]] = []
-    monkeypatch.setattr(cli, "_set_status", lambda *args: calls.append(args))
+
+    async def _capture(*args: object) -> None:
+        calls.append(args)
+
+    monkeypatch.setattr(cli, "_set_status", _capture)
 
     cli.main([command, "--name", "m"])
 
@@ -82,11 +89,11 @@ def test_main_activate_deactivate_sets_status(
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_cli_db")
-def test_list_prints_every_model(db_session: Session, capsys: pytest.CaptureFixture[str]) -> None:
-    _seed(db_session, name="alpha")
-    _seed(db_session, name="beta")
+async def test_list_prints_every_model(db_session: AsyncSession, capsys: pytest.CaptureFixture[str]) -> None:
+    await _seed(db_session, name="alpha")
+    await _seed(db_session, name="beta")
 
-    cli._list()
+    await cli._list()
 
     out = capsys.readouterr().out
     assert "alpha" in out
@@ -95,10 +102,10 @@ def test_list_prints_every_model(db_session: Session, capsys: pytest.CaptureFixt
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_cli_db")
-def test_get_prints_the_requested_model(db_session: Session, capsys: pytest.CaptureFixture[str]) -> None:
-    _seed(db_session, name="alpha", model_id="a/b")
+async def test_get_prints_the_requested_model(db_session: AsyncSession, capsys: pytest.CaptureFixture[str]) -> None:
+    await _seed(db_session, name="alpha", model_id="a/b")
 
-    cli._get("alpha")
+    await cli._get("alpha")
 
     out = capsys.readouterr().out
     assert "alpha" in out
@@ -107,17 +114,17 @@ def test_get_prints_the_requested_model(db_session: Session, capsys: pytest.Capt
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_cli_db", "db_session")
-def test_get_exits_when_model_missing() -> None:
+async def test_get_exits_when_model_missing() -> None:
     with pytest.raises(SystemExit, match="Model not found"):
-        cli._get("ghost")
+        await cli._get("ghost")
 
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_cli_db")
-def test_set_status_deactivates_and_prints(db_session: Session, capsys: pytest.CaptureFixture[str]) -> None:
-    _seed(db_session, name="alpha", status=ModelStatus.ACTIVE)
+async def test_set_status_deactivates_and_prints(db_session: AsyncSession, capsys: pytest.CaptureFixture[str]) -> None:
+    await _seed(db_session, name="alpha", status=ModelStatus.ACTIVE)
 
-    cli._set_status("alpha", ModelStatus.INACTIVE)
+    await cli._set_status("alpha", ModelStatus.INACTIVE)
 
     out = capsys.readouterr().out
     assert "alpha" in out
@@ -126,26 +133,26 @@ def test_set_status_deactivates_and_prints(db_session: Session, capsys: pytest.C
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_cli_db", "db_session")
-def test_set_status_exits_when_model_missing() -> None:
+async def test_set_status_exits_when_model_missing() -> None:
     with pytest.raises(SystemExit, match="Model not found"):
-        cli._set_status("ghost", ModelStatus.INACTIVE)
+        await cli._set_status("ghost", ModelStatus.INACTIVE)
 
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_cli_db")
-def test_smoke_prints_generated_summary(
-    db_session: Session, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+async def test_smoke_prints_generated_summary(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _seed(db_session, name="alpha")
+    await _seed(db_session, name="alpha")
     monkeypatch.setattr(cli, "ModelService", _FakeService)
 
-    cli._smoke("alpha")
+    await cli._smoke("alpha")
 
     assert "SMOKE OUT" in capsys.readouterr().out
 
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_cli_db", "db_session")
-def test_smoke_exits_when_model_missing() -> None:
+async def test_smoke_exits_when_model_missing() -> None:
     with pytest.raises(SystemExit, match="Model not found"):
-        cli._smoke("ghost")
+        await cli._smoke("ghost")

@@ -11,15 +11,16 @@ python -m arc_model_lab.cli.experiments compare --experiment-id <uuid> --other-i
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
+import asyncio
+from collections.abc import Awaitable, Callable
 from typing import TypeVar
 from uuid import UUID
 
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from arc_model_lab.clients.arc_eval_client import EvalSettings, build_arc_eval_client
 from arc_model_lab.config import get_settings
-from arc_model_lab.db.base import create_engine_from_url, create_session_factory
+from arc_model_lab.db.base import create_async_engine_from_url, create_async_session_factory
 from arc_model_lab.domain import (
     DomainError,
     ExperimentMetricAggregate,
@@ -35,14 +36,14 @@ from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_service import ModelService
 
 
-def _session_factory() -> sessionmaker[Session]:
-    return create_session_factory(create_engine_from_url(get_settings().database_url))
+def _session_factory() -> async_sessionmaker[AsyncSession]:
+    return create_async_session_factory(create_async_engine_from_url(get_settings().database_url))
 
 
 _T = TypeVar("_T")
 
 
-def _in_session(operation: Callable[[Session], _T]) -> _T:
+async def _in_session(operation: Callable[[AsyncSession], Awaitable[_T]]) -> _T:
     """Run a session-scoped operation, surfacing domain errors as clean CLI exits.
 
     Keeps the subcommands from each re-deriving how a bad id or a conflict should
@@ -50,8 +51,8 @@ def _in_session(operation: Callable[[Session], _T]) -> _T:
     than a traceback.
     """
     try:
-        with _session_factory()() as session:
-            return operation(session)
+        async with _session_factory()() as session:
+            return await operation(session)
     except DomainError as exc:
         raise SystemExit(str(exc)) from exc
 
@@ -71,26 +72,26 @@ def _print_aggregates(experiment_id: UUID, aggregates: list[ExperimentMetricAggr
         print(f"{experiment_id}\t{aggregate.metric_name}\t{aggregate.average_score:.3f}\t{aggregate.evaluated_count}")
 
 
-def _create(name: str, model_name: str, config: GenerationConfig) -> None:
+async def _create(name: str, model_name: str, config: GenerationConfig) -> None:
     service = _experiment_service()
-    view = _in_session(
+    view = await _in_session(
         lambda session: service.create(session, name=name, model_name=model_name, generation_config=config)
     )
     print(f"{view.experiment.id}\t{view.experiment.name}\t{view.model_name}")
 
 
-def _run(experiment_id: UUID, input_text: str, metrics: list[str] | None) -> None:
+async def _run(experiment_id: UUID, input_text: str, metrics: list[str] | None) -> None:
     service = _experiment_service()
-    result = _in_session(lambda session: service.run(session, experiment_id, input_text, metrics=metrics))
+    result = await _in_session(lambda session: service.run(session, experiment_id, input_text, metrics=metrics))
     scores = "-"
     if result.evaluation is not None:
         scores = ", ".join(f"{r.metric_name}={r.score:.3f}" for r in result.evaluation.results) or "-"
     print(f"{result.inference.id}\t{result.inference.output_text}\t{scores}")
 
 
-def _compare(experiment_id: UUID, other_id: UUID) -> None:
+async def _compare(experiment_id: UUID, other_id: UUID) -> None:
     service = _experiment_service()
-    comparison = _in_session(lambda session: service.compare(session, experiment_id, other_id))
+    comparison = await _in_session(lambda session: service.compare(session, experiment_id, other_id))
     for result in comparison:
         _print_aggregates(result.experiment_id, result.metrics)
 
@@ -121,11 +122,11 @@ def main(argv: list[str] | None = None) -> None:
             temperature=args.temperature,
             max_output_tokens=args.max_output_tokens,
         )
-        _create(args.name, args.model_name, config)
+        asyncio.run(_create(args.name, args.model_name, config))
     elif args.command == "run":
-        _run(args.experiment_id, args.input_text, args.metrics)
+        asyncio.run(_run(args.experiment_id, args.input_text, args.metrics))
     elif args.command == "compare":  # pragma: no branch - argparse restricts the command set
-        _compare(args.experiment_id, args.other_id)
+        asyncio.run(_compare(args.experiment_id, args.other_id))
 
 
 if __name__ == "__main__":

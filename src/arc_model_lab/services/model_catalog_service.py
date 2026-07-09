@@ -9,7 +9,7 @@ owns the HuggingFace runtime (weights and generation), not persistence.
 
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from arc_model_lab.db.repositories import ModelRepository
 from arc_model_lab.domain import Model
@@ -18,10 +18,10 @@ from arc_model_lab.domain import Model
 class ModelCatalogService:
     """Lists catalog models and fetches one by name for the read endpoints."""
 
-    def list_models(self, session: Session) -> list[Model]:
+    async def list_models(self, session: AsyncSession) -> list[Model]:
         """Return every catalog model, ordered by name."""
-        return ModelRepository(session).list_all()
+        return await ModelRepository(session).list_all()
 
-    def get(self, session: Session, name: str) -> Model:
+    async def get(self, session: AsyncSession, name: str) -> Model:
         """Return the catalog model with this name, or raise ``ModelNotFoundError`` (404)."""
-        return ModelRepository(session).require_by_name(name)
+        return await ModelRepository(session).require_by_name(name)

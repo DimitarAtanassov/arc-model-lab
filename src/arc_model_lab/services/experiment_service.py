@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from arc_model_lab.db.repositories import ExperimentRepository, ExperimentRunRepository, ModelRepository
 from arc_model_lab.domain import (
@@ -63,9 +63,9 @@ class ExperimentService:
         self._inference = inference_service
         self._evaluation = evaluation_service
 
-    def create(
+    async def create(
         self,
-        session: Session,
+        session: AsyncSession,
         *,
         name: str,
         model_name: str,
@@ -79,39 +79,39 @@ class ExperimentService:
         redundant (and would not close the concurrent-create race anyway). The
         model is only required to exist (ModelNotFoundError -> 404 otherwise).
         """
-        model = ModelRepository(session).require_by_name(model_name)
+        model = await ModelRepository(session).require_by_name(model_name)
         experiment = Experiment(
             name=name,
             model_id=model.id,
             generation_config=generation_config,
             description=description,
         )
-        saved = ExperimentRepository(session).add(experiment)
-        session.commit()
+        saved = await ExperimentRepository(session).add(experiment)
+        await session.commit()
         return ExperimentView(experiment=saved, model_name=model.name)
 
-    def get(self, session: Session, experiment_id: UUID) -> ExperimentView:
+    async def get(self, session: AsyncSession, experiment_id: UUID) -> ExperimentView:
         """Return the experiment and its model name, or raise (404)."""
-        experiment = self._require_experiment(session, experiment_id)
-        model = ModelRepository(session).require_by_id(experiment.model_id)
+        experiment = await self._require_experiment(session, experiment_id)
+        model = await ModelRepository(session).require_by_id(experiment.model_id)
         return ExperimentView(experiment=experiment, model_name=model.name)
 
-    def list_recent(self, session: Session, limit: int) -> list[ExperimentView]:
+    async def list_recent(self, session: AsyncSession, limit: int) -> list[ExperimentView]:
         """Return recent experiments paired with their model names (bounded).
 
         Model names are resolved with a single catalog read and an in-memory map,
         not one query per experiment, so the list stays free of an N+1.
         """
-        experiments = ExperimentRepository(session).list_recent(limit)
-        names = {model.id: model.name for model in ModelRepository(session).list_all()}
+        experiments = await ExperimentRepository(session).list_recent(limit)
+        names = {model.id: model.name for model in await ModelRepository(session).list_all()}
         return [
             ExperimentView(experiment=experiment, model_name=names.get(experiment.model_id, "unknown"))
             for experiment in experiments
         ]
 
-    def run(
+    async def run(
         self,
-        session: Session,
+        session: AsyncSession,
         experiment_id: UUID,
         input_text: str,
         *,
@@ -124,17 +124,19 @@ class ExperimentService:
         association last. Raises ExperimentNotFoundError for an unknown experiment
         and ModelNotFoundError if its model was removed.
         """
-        experiment = self._require_experiment(session, experiment_id)
-        model = ModelRepository(session).require_by_id(experiment.model_id)
-        inference = self._inference.run_for_experiment(
+        experiment = await self._require_experiment(session, experiment_id)
+        model = await ModelRepository(session).require_by_id(experiment.model_id)
+        inference = await self._inference.run_for_experiment(
             session,
             model=model,
             input_text=input_text,
             config=experiment.generation_config,
         )
-        outcome = self._evaluation.evaluate_inference(session, inference, metrics) if metrics else None
-        ExperimentRunRepository(session).add(ExperimentRun(experiment_id=experiment.id, inference_id=inference.id))
-        session.commit()
+        outcome = (await self._evaluation.evaluate_inference(session, inference, metrics)) if metrics else None
+        await ExperimentRunRepository(session).add(
+            ExperimentRun(experiment_id=experiment.id, inference_id=inference.id)
+        )
+        await session.commit()
         logger.info(
             "experiment run complete",
             extra={
@@ -148,25 +150,25 @@ class ExperimentService:
         )
         return ExperimentRunResult(inference=inference, evaluation=outcome)
 
-    def results(self, session: Session, experiment_id: UUID) -> ExperimentResults:
-        self._require_experiment(session, experiment_id)
-        aggregates = ExperimentRepository(session).aggregate_scores(experiment_id)
+    async def results(self, session: AsyncSession, experiment_id: UUID) -> ExperimentResults:
+        await self._require_experiment(session, experiment_id)
+        aggregates = await ExperimentRepository(session).aggregate_scores(experiment_id)
         return ExperimentResults(experiment_id=experiment_id, metrics=aggregates)
 
-    def compare(
+    async def compare(
         self,
-        session: Session,
+        session: AsyncSession,
         experiment_id_a: UUID,
         experiment_id_b: UUID,
     ) -> list[ExperimentResults]:
         """Aggregate scores for both experiments, in the order given."""
         return [
-            self.results(session, experiment_id_a),
-            self.results(session, experiment_id_b),
+            await self.results(session, experiment_id_a),
+            await self.results(session, experiment_id_b),
         ]
 
-    def _require_experiment(self, session: Session, experiment_id: UUID) -> Experiment:
-        experiment = ExperimentRepository(session).get(experiment_id)
+    async def _require_experiment(self, session: AsyncSession, experiment_id: UUID) -> Experiment:
+        experiment = await ExperimentRepository(session).get(experiment_id)
         if experiment is None:
             raise ExperimentNotFoundError(f"Experiment not found: {experiment_id}")
         return experiment

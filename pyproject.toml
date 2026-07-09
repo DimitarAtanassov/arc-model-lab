@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-    "sqlalchemy>=2.0",
+    "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.13",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
@@ -98,6 +98,10 @@ markers = [
 [tool.coverage.run]
 source = ["src"]
 branch = true
+# SQLAlchemy's async engine bridges to the DBAPI through greenlets; without this,
+# code executed under await (e.g. handlers reached over the ASGI transport) is
+# invisible to the tracer.
+concurrency = ["thread", "greenlet"]
 
 [tool.coverage.report]
 show_missing = true

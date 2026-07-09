@@ -13,7 +13,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from arc_model_lab.config import Settings
 from arc_model_lab.db.models import ExperimentRecord, ExperimentRunRecord
@@ -70,8 +70,10 @@ def _config() -> GenerationConfig:
     return GenerationConfig(temperature=0.0, max_output_tokens=256)
 
 
-def _persist_model(session: Session, name: str = "base", *, status: ModelStatus = ModelStatus.ACTIVE) -> Model:
-    model = ModelRepository(session).upsert(
+async def _persist_model(
+    session: AsyncSession, name: str = "base", *, status: ModelStatus = ModelStatus.ACTIVE
+) -> Model:
+    model = await ModelRepository(session).upsert(
         Model(
             name=name,
             provider=Provider.HUGGINGFACE,
@@ -80,7 +82,7 @@ def _persist_model(session: Session, name: str = "base", *, status: ModelStatus 
             status=status,
         )
     )
-    session.commit()
+    await session.commit()
     return model
 
 
@@ -92,53 +94,58 @@ def _service(model_service: ModelService) -> ExperimentService:
     return ExperimentService(InferenceService(model_service), EvaluationService(None))
 
 
-def _create(service: ExperimentService, session: Session, model_name: str, *, name: str = "exp") -> Experiment:
+async def _create(
+    service: ExperimentService, session: AsyncSession, model_name: str, *, name: str = "exp"
+) -> Experiment:
     """Create an experiment via the service and return the stored domain entity."""
-    return service.create(session, name=name, model_name=model_name, generation_config=_config()).experiment
+    view = await service.create(session, name=name, model_name=model_name, generation_config=_config())
+    return view.experiment
 
 
-def test_add_and_get_round_trips(db_session: Session) -> None:
-    model = _persist_model(db_session)
+async def test_add_and_get_round_trips(db_session: AsyncSession) -> None:
+    model = await _persist_model(db_session)
     repo = ExperimentRepository(db_session)
-    saved = repo.add(_experiment(model.id))
-    db_session.commit()
+    saved = await repo.add(_experiment(model.id))
+    await db_session.commit()
 
-    fetched = repo.get(saved.id)
+    fetched = await repo.get(saved.id)
     assert fetched is not None
     assert fetched.name == "exp"
     assert fetched.model_id == model.id
     assert fetched.generation_config == _config()
 
 
-def test_get_returns_none_when_absent(db_session: Session) -> None:
-    assert ExperimentRepository(db_session).get(uuid4()) is None
+async def test_get_returns_none_when_absent(db_session: AsyncSession) -> None:
+    assert await ExperimentRepository(db_session).get(uuid4()) is None
 
 
-def test_run_allows_an_inactive_model(db_session: Session, fake_model_service: ModelService) -> None:
+async def test_run_allows_an_inactive_model(db_session: AsyncSession, fake_model_service: ModelService) -> None:
     # Experiments deliberately bypass the /inference active gate so a candidate
     # model can be evaluated before it is activated.
-    model = _persist_model(db_session, name="candidate", status=ModelStatus.INACTIVE)
+    model = await _persist_model(db_session, name="candidate", status=ModelStatus.INACTIVE)
     service = _service(fake_model_service)
-    experiment = _create(service, db_session, model.name, name="candidate-exp")
+    experiment = await _create(service, db_session, model.name, name="candidate-exp")
 
-    result = service.run(db_session, experiment.id, "summarize this")
+    result = await service.run(db_session, experiment.id, "summarize this")
 
-    link = db_session.scalar(select(ExperimentRunRecord).where(ExperimentRunRecord.inference_id == result.inference.id))
+    link = await db_session.scalar(
+        select(ExperimentRunRecord).where(ExperimentRunRecord.inference_id == result.inference.id)
+    )
     assert link is not None
     assert link.experiment_id == experiment.id
 
 
-def test_aggregate_scores_averages_by_metric(db_session: Session) -> None:
-    model = _persist_model(db_session)
+async def test_aggregate_scores_averages_by_metric(db_session: AsyncSession) -> None:
+    model = await _persist_model(db_session)
     repo = ExperimentRepository(db_session)
-    experiment = repo.add(_experiment(model.id))
-    db_session.commit()
+    experiment = await repo.add(_experiment(model.id))
+    await db_session.commit()
 
     inference_repo = InferenceRepository(db_session)
     run_repo = ExperimentRunRepository(db_session)
     eval_repo = EvaluationResultRepository(db_session)
     for score in (0.6, 0.8):
-        inference = inference_repo.add(
+        inference = await inference_repo.add(
             Inference(
                 model_id=model.id,
                 input_text="in",
@@ -147,9 +154,9 @@ def test_aggregate_scores_averages_by_metric(db_session: Session) -> None:
                 latency_ms=1,
             )
         )
-        db_session.commit()
-        run_repo.add(ExperimentRun(experiment_id=experiment.id, inference_id=inference.id))
-        eval_repo.upsert_many(
+        await db_session.commit()
+        await run_repo.add(ExperimentRun(experiment_id=experiment.id, inference_id=inference.id))
+        await eval_repo.upsert_many(
             [
                 EvaluationResult(
                     inference_id=inference.id,
@@ -159,9 +166,9 @@ def test_aggregate_scores_averages_by_metric(db_session: Session) -> None:
                 )
             ]
         )
-        db_session.commit()
+        await db_session.commit()
 
-    aggregates = repo.aggregate_scores(experiment.id)
+    aggregates = await repo.aggregate_scores(experiment.id)
 
     assert len(aggregates) == 1
     assert aggregates[0].metric_name == "faithfulness"
@@ -169,90 +176,93 @@ def test_aggregate_scores_averages_by_metric(db_session: Session) -> None:
     assert aggregates[0].average_score == pytest.approx(0.7)
 
 
-def test_create_rejects_unknown_model(db_session: Session, fake_model_service: ModelService) -> None:
+async def test_create_rejects_unknown_model(db_session: AsyncSession, fake_model_service: ModelService) -> None:
     service = _service(fake_model_service)
     with pytest.raises(ModelNotFoundError):
-        service.create(db_session, name="exp", model_name="does-not-exist", generation_config=_config())
+        await service.create(db_session, name="exp", model_name="does-not-exist", generation_config=_config())
 
 
-def test_run_links_inference_to_experiment(db_session: Session, fake_model_service: ModelService) -> None:
-    model = _persist_model(db_session)
+async def test_run_links_inference_to_experiment(db_session: AsyncSession, fake_model_service: ModelService) -> None:
+    model = await _persist_model(db_session)
     service = _service(fake_model_service)
-    experiment = _create(service, db_session, model.name)
+    experiment = await _create(service, db_session, model.name)
 
-    result = service.run(db_session, experiment.id, "summarize this")
+    result = await service.run(db_session, experiment.id, "summarize this")
 
     assert result.evaluation is None
     # The inference is persisted; the experiment link lives in experiment_runs,
     # not on the inference row.
-    stored = InferenceRepository(db_session).get(result.inference.id)
+    stored = await InferenceRepository(db_session).get(result.inference.id)
     assert stored is not None
-    link = db_session.scalar(select(ExperimentRunRecord).where(ExperimentRunRecord.inference_id == result.inference.id))
+    link = await db_session.scalar(
+        select(ExperimentRunRecord).where(ExperimentRunRecord.inference_id == result.inference.id)
+    )
     assert link is not None
     assert link.experiment_id == experiment.id
 
 
-def test_get_by_name_round_trips(db_session: Session) -> None:
-    model = _persist_model(db_session)
+async def test_get_by_name_round_trips(db_session: AsyncSession) -> None:
+    model = await _persist_model(db_session)
     repo = ExperimentRepository(db_session)
-    repo.add(_experiment(model.id, name="named"))
-    db_session.commit()
+    await repo.add(_experiment(model.id, name="named"))
+    await db_session.commit()
 
-    fetched = repo.get_by_name("named")
+    fetched = await repo.get_by_name("named")
 
     assert fetched is not None
     assert fetched.name == "named"
-    assert repo.get_by_name("absent") is None
+    assert await repo.get_by_name("absent") is None
 
 
-def test_create_rejects_duplicate_name(db_session: Session, fake_model_service: ModelService) -> None:
-    model = _persist_model(db_session)
+async def test_create_rejects_duplicate_name(db_session: AsyncSession, fake_model_service: ModelService) -> None:
+    model = await _persist_model(db_session)
     service = _service(fake_model_service)
-    _create(service, db_session, model.name, name="dup")
+    await _create(service, db_session, model.name, name="dup")
 
     with pytest.raises(ExperimentNameConflictError):
-        _create(service, db_session, model.name, name="dup")
+        await _create(service, db_session, model.name, name="dup")
 
 
-def test_results_rejects_unknown_experiment(db_session: Session, fake_model_service: ModelService) -> None:
+async def test_results_rejects_unknown_experiment(db_session: AsyncSession, fake_model_service: ModelService) -> None:
     service = _service(fake_model_service)
 
     with pytest.raises(ExperimentNotFoundError):
-        service.results(db_session, uuid4())
+        await service.results(db_session, uuid4())
 
 
-def test_compare_rejects_unknown_experiment(db_session: Session, fake_model_service: ModelService) -> None:
-    model = _persist_model(db_session)
+async def test_compare_rejects_unknown_experiment(db_session: AsyncSession, fake_model_service: ModelService) -> None:
+    model = await _persist_model(db_session)
     service = _service(fake_model_service)
-    known = _create(service, db_session, model.name, name="known")
+    known = await _create(service, db_session, model.name, name="known")
 
     with pytest.raises(ExperimentNotFoundError):
-        service.compare(db_session, known.id, uuid4())
+        await service.compare(db_session, known.id, uuid4())
 
 
-def test_run_uses_the_experiment_generation_config(db_session: Session, settings: Settings) -> None:
-    model = _persist_model(db_session)
+async def test_run_uses_the_experiment_generation_config(db_session: AsyncSession, settings: Settings) -> None:
+    model = await _persist_model(db_session)
     capturing = _CapturingModelService(settings)
     service = _service(capturing)
     config = GenerationConfig(temperature=0.7, max_output_tokens=32)
-    experiment = service.create(db_session, name="cfg", model_name=model.name, generation_config=config).experiment
+    view = await service.create(db_session, name="cfg", model_name=model.name, generation_config=config)
+    experiment = view.experiment
 
-    service.run(db_session, experiment.id, "summarize this")
+    await service.run(db_session, experiment.id, "summarize this")
 
     assert capturing.configs == [config]
 
 
-def test_add_reraises_foreign_key_violation(db_session: Session) -> None:
+async def test_add_reraises_foreign_key_violation(db_session: AsyncSession) -> None:
     # A non-existent model_id violates the RESTRICT foreign key, not the name
     # unique constraint: it must surface as IntegrityError, not a name conflict.
     repo = ExperimentRepository(db_session)
 
     with pytest.raises(IntegrityError):
-        repo.add(_experiment(uuid4(), name="orphan"))
+        await repo.add(_experiment(uuid4(), name="orphan"))
 
 
-def test_get_raises_on_corrupt_stored_generation_config(db_session: Session) -> None:
-    model = _persist_model(db_session)
+async def test_get_raises_on_corrupt_stored_generation_config(db_session: AsyncSession) -> None:
+    model = await _persist_model(db_session)
     db_session.add(
         ExperimentRecord(
             id=uuid4(),
@@ -261,7 +271,7 @@ def test_get_raises_on_corrupt_stored_generation_config(db_session: Session) -> 
             generation_config={"temperature": 1},
         )
     )
-    db_session.commit()
+    await db_session.commit()
 
     with pytest.raises(CorruptStoredDataError):
-        ExperimentRepository(db_session).get_by_name("corrupt")
+        await ExperimentRepository(db_session).get_by_name("corrupt")

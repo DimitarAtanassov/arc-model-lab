@@ -15,7 +15,7 @@ exception to reason about when it decides whether to fail open.
 from __future__ import annotations
 
 import httpx
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from arc_model_lab.domain import EvaluationError, UnknownMetricError
@@ -92,15 +92,18 @@ class EvalSettings(BaseSettings):
 
     service_url: str = ""
     timeout_seconds: float = 30.0
+    # Max concurrent arc-eval calls in a batch fan-out (replay/backfill); bounds
+    # outbound load so a large backlog cannot overwhelm arc-eval.
+    concurrency: int = Field(default=8, ge=1)
 
 
 class ArcEvalClient:
-    """Synchronous client for the arc-eval ``/v1/evaluate`` endpoint."""
+    """Asynchronous client for the arc-eval ``/v1/evaluate`` endpoint."""
 
-    def __init__(self, http_client: httpx.Client) -> None:
+    def __init__(self, http_client: httpx.AsyncClient) -> None:
         self._http = http_client
 
-    def evaluate(self, request: EvalRequest) -> EvalResponse:
+    async def evaluate(self, request: EvalRequest) -> EvalResponse:
         """Score one interaction.
 
         Raises :class:`UnknownMetricError` when arc-eval does not define a
@@ -109,7 +112,7 @@ class ArcEvalClient:
         so the service layer has a single fail-open signal to reason about.
         """
         try:
-            response = self._http.post(_EVALUATE_PATH, json=request.model_dump(mode="json"))
+            response = await self._http.post(_EVALUATE_PATH, json=request.model_dump(mode="json"))
         except httpx.HTTPError as exc:
             raise EvaluationError("arc-eval request failed") from exc
 
@@ -131,15 +134,15 @@ class ArcEvalClient:
         except ValidationError as exc:
             raise EvaluationError("arc-eval returned an unexpected schema") from exc
 
-    def close(self) -> None:
-        self._http.close()
+    async def aclose(self) -> None:
+        await self._http.aclose()
 
 
 def build_arc_eval_client(settings: EvalSettings) -> ArcEvalClient | None:
     """Build a client from settings, or ``None`` when no service url is configured."""
     if not settings.service_url:
         return None
-    http_client = httpx.Client(base_url=settings.service_url, timeout=settings.timeout_seconds)
+    http_client = httpx.AsyncClient(base_url=settings.service_url, timeout=settings.timeout_seconds)
     return ArcEvalClient(http_client)
 
 

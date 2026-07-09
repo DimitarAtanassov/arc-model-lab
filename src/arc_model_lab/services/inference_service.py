@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, replace
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from arc_model_lab.db.repositories import (
     EvaluationResultRepository,
@@ -65,8 +66,8 @@ class InferenceService:
     def __init__(self, model_service: ModelService) -> None:
         self._model_service = model_service
 
-    def summarize(
-        self, session: Session, *, model_name: str, input_text: str, temperature: float | None = None
+    async def summarize(
+        self, session: AsyncSession, *, model_name: str, input_text: str, temperature: float | None = None
     ) -> Inference:
         """Resolve the named model and run one summarization for ``/inference``.
 
@@ -78,15 +79,15 @@ class InferenceService:
         name, :class:`ModelInactiveError` (409) when the model is not active, and
         :class:`InputTooLargeError` (413) for an oversized payload.
         """
-        model = self._resolve_model(session, model_name)
+        model = await self._resolve_model(session, model_name)
         config = self._model_service.default_generation_config()
         if temperature is not None:
             config = replace(config, temperature=temperature)
-        return self._generate_and_store(session, model=model, input_text=input_text, config=config)
+        return await self._generate_and_store(session, model=model, input_text=input_text, config=config)
 
-    def run_for_experiment(
+    async def run_for_experiment(
         self,
-        session: Session,
+        session: AsyncSession,
         *,
         model: Model,
         input_text: str,
@@ -97,11 +98,11 @@ class InferenceService:
         The inference is stored with no experiment reference; ``ExperimentService``
         records the experiment-inference association after this returns.
         """
-        return self._generate_and_store(session, model=model, input_text=input_text, config=config)
+        return await self._generate_and_store(session, model=model, input_text=input_text, config=config)
 
-    def _generate_and_store(
+    async def _generate_and_store(
         self,
-        session: Session,
+        session: AsyncSession,
         *,
         model: Model,
         input_text: str,
@@ -111,7 +112,9 @@ class InferenceService:
             raise InputTooLargeError(f"Input exceeds {_MAX_INPUT_CHARS} characters")
 
         messages = build_summary_messages(input_text)
-        result = self._model_service.generate(model, messages, config)
+        # Generation is CPU/GPU-bound and blocking; run it off the event loop so a
+        # request never stalls the loop for other requests.
+        result = await asyncio.to_thread(self._model_service.generate, model, messages, config)
 
         inference = Inference(
             model_id=model.id,
@@ -122,27 +125,27 @@ class InferenceService:
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
         )
-        persisted = InferenceRepository(session).add(inference)
-        session.commit()
+        persisted = await InferenceRepository(session).add(inference)
+        await session.commit()
         return persisted
 
-    def _resolve_model(self, session: Session, model_name: str) -> Model:
-        model = ModelRepository(session).require_by_name(model_name)
+    async def _resolve_model(self, session: AsyncSession, model_name: str) -> Model:
+        model = await ModelRepository(session).require_by_name(model_name)
         if model.status != ModelStatus.ACTIVE:
             raise ModelInactiveError(f"Model is not active: {model_name}")
         return model
 
-    def list_recent(self, session: Session, limit: int) -> list[Inference]:
+    async def list_recent(self, session: AsyncSession, limit: int) -> list[Inference]:
         """Return the most recent inferences for the history surface (bounded)."""
-        return InferenceRepository(session).list_recent(limit)
+        return await InferenceRepository(session).list_recent(limit)
 
-    def get_detail(self, session: Session, inference_id: UUID) -> InferenceDetailView:
+    async def get_detail(self, session: AsyncSession, inference_id: UUID) -> InferenceDetailView:
         """Return one inference with its evaluation scores, or raise (404).
 
         Raises :class:`InferenceNotFoundError` when no inference has that id.
         """
-        inference = InferenceRepository(session).get(inference_id)
+        inference = await InferenceRepository(session).get(inference_id)
         if inference is None:
             raise InferenceNotFoundError(f"Inference not found: {inference_id}")
-        evaluations = EvaluationResultRepository(session).list_for_inference(inference_id)
+        evaluations = await EvaluationResultRepository(session).list_for_inference(inference_id)
         return InferenceDetailView(inference=inference, evaluations=evaluations)

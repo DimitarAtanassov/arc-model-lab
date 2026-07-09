@@ -9,8 +9,7 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
-from sqlalchemy import Engine
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from arc_model_lab.cli import experiments as cli
 from arc_model_lab.config import Settings
@@ -33,16 +32,16 @@ _OTHER = UUID("22222222-2222-2222-2222-222222222222")
 _CONFIG = GenerationConfig(temperature=0.0, max_output_tokens=256)
 
 
-def _seed_model(session: Session, name: str = "base") -> Model:
-    model = ModelRepository(session).upsert(
+async def _seed_model(session: AsyncSession, name: str = "base") -> Model:
+    model = await ModelRepository(session).upsert(
         Model(name=name, provider=Provider.HUGGINGFACE, model_id="org/model", tokenizer_id="org/model")
     )
-    session.commit()
+    await session.commit()
     return model
 
 
 @pytest.fixture
-def _cli_db(engine: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+def _cli_db(engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the CLI's own session factory at the test container."""
     url = engine.url.render_as_string(hide_password=False)
     monkeypatch.setattr(cli, "get_settings", lambda: Settings(database_url=url))
@@ -55,7 +54,11 @@ def test_main_requires_a_subcommand() -> None:
 
 def test_main_create_assembles_config_from_args(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[object, ...]] = []
-    monkeypatch.setattr(cli, "_create", lambda *args: calls.append(args))
+
+    async def _capture(*args: object) -> None:
+        calls.append(args)
+
+    monkeypatch.setattr(cli, "_create", _capture)
 
     cli.main(["create", "--name", "e", "--model-name", "m", "--temperature", "0.7"])
 
@@ -73,7 +76,11 @@ def test_main_dispatches_to_handler(
     monkeypatch: pytest.MonkeyPatch, argv: list[str], handler: str, expected_args: tuple[object, ...]
 ) -> None:
     calls: list[tuple[object, ...]] = []
-    monkeypatch.setattr(cli, handler, lambda *args: calls.append(args))
+
+    async def _capture(*args: object) -> None:
+        calls.append(args)
+
+    monkeypatch.setattr(cli, handler, _capture)
 
     cli.main(argv)
 
@@ -82,41 +89,43 @@ def test_main_dispatches_to_handler(
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_cli_db")
-def test_create_persists_and_prints(db_session: Session, capsys: pytest.CaptureFixture[str]) -> None:
-    _seed_model(db_session)
+async def test_create_persists_and_prints(db_session: AsyncSession, capsys: pytest.CaptureFixture[str]) -> None:
+    await _seed_model(db_session)
 
-    cli._create("exp-a", "base", _CONFIG)
+    await cli._create("exp-a", "base", _CONFIG)
 
     assert "exp-a" in capsys.readouterr().out
 
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_cli_db")
-def test_create_rejects_duplicate_name(db_session: Session) -> None:
-    _seed_model(db_session)
-    cli._create("dup", "base", _CONFIG)
+async def test_create_rejects_duplicate_name(db_session: AsyncSession) -> None:
+    await _seed_model(db_session)
+    await cli._create("dup", "base", _CONFIG)
 
     with pytest.raises(SystemExit, match="already exists"):
-        cli._create("dup", "base", _CONFIG)
+        await cli._create("dup", "base", _CONFIG)
 
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_cli_db", "db_session")
-def test_create_exits_when_model_missing() -> None:
+async def test_create_exits_when_model_missing() -> None:
     with pytest.raises(SystemExit, match="Model not found"):
-        cli._create("x", "ghost", _CONFIG)
+        await cli._create("x", "ghost", _CONFIG)
 
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_cli_db")
-def test_compare_prints_a_line_per_experiment(db_session: Session, capsys: pytest.CaptureFixture[str]) -> None:
-    model = _seed_model(db_session)
+async def test_compare_prints_a_line_per_experiment(
+    db_session: AsyncSession, capsys: pytest.CaptureFixture[str]
+) -> None:
+    model = await _seed_model(db_session)
     repo = ExperimentRepository(db_session)
-    first = repo.add(Experiment(name="a", model_id=model.id, generation_config=_CONFIG))
-    second = repo.add(Experiment(name="b", model_id=model.id, generation_config=_CONFIG))
-    db_session.commit()
+    first = await repo.add(Experiment(name="a", model_id=model.id, generation_config=_CONFIG))
+    second = await repo.add(Experiment(name="b", model_id=model.id, generation_config=_CONFIG))
+    await db_session.commit()
 
-    cli._compare(first.id, second.id)
+    await cli._compare(first.id, second.id)
 
     out = capsys.readouterr().out
     assert str(first.id) in out
@@ -131,7 +140,7 @@ def test_print_aggregates_prints_metric_rows(capsys: pytest.CaptureFixture[str])
     assert capsys.readouterr().out == f"{_ID}\tfaithfulness\t0.900\t3\n"
 
 
-def test_run_prints_scores_when_evaluation_present(
+async def test_run_prints_scores_when_evaluation_present(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -164,18 +173,18 @@ def test_run_prints_scores_when_evaluation_present(
     )
 
     class _Service:
-        def run(self, *args: object, **kwargs: object) -> ExperimentRunResult:
+        async def run(self, *args: object, **kwargs: object) -> ExperimentRunResult:
             return scored
 
     monkeypatch.setattr(cli, "_experiment_service", _Service)
     monkeypatch.setattr(cli, "_in_session", lambda op: op(None))
 
-    cli._run(_ID, "hello", ["faithfulness", "relevance"])
+    await cli._run(_ID, "hello", ["faithfulness", "relevance"])
 
     assert capsys.readouterr().out == f"{inference.id}\tsummary\tfaithfulness=0.910, relevance=0.750\n"
 
 
-def test_run_prints_dash_when_evaluation_empty(
+async def test_run_prints_dash_when_evaluation_empty(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -192,18 +201,18 @@ def test_run_prints_dash_when_evaluation_empty(
     )
 
     class _Service:
-        def run(self, *args: object, **kwargs: object) -> ExperimentRunResult:
+        async def run(self, *args: object, **kwargs: object) -> ExperimentRunResult:
             return no_scores
 
     monkeypatch.setattr(cli, "_experiment_service", _Service)
     monkeypatch.setattr(cli, "_in_session", lambda op: op(None))
 
-    cli._run(_ID, "hello", ["faithfulness"])
+    await cli._run(_ID, "hello", ["faithfulness"])
 
     assert capsys.readouterr().out == f"{inference.id}\tsummary\t-\n"
 
 
-def test_run_prints_dash_when_evaluation_absent(
+async def test_run_prints_dash_when_evaluation_absent(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -217,12 +226,12 @@ def test_run_prints_dash_when_evaluation_absent(
     result_without_evaluation = ExperimentRunResult(inference=inference, evaluation=None)
 
     class _Service:
-        def run(self, *args: object, **kwargs: object) -> ExperimentRunResult:
+        async def run(self, *args: object, **kwargs: object) -> ExperimentRunResult:
             return result_without_evaluation
 
     monkeypatch.setattr(cli, "_experiment_service", _Service)
     monkeypatch.setattr(cli, "_in_session", lambda op: op(None))
 
-    cli._run(_ID, "hello", ["faithfulness"])
+    await cli._run(_ID, "hello", ["faithfulness"])
 
     assert capsys.readouterr().out == f"{inference.id}\tsummary\t-\n"

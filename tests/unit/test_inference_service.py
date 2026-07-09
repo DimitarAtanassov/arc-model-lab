@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from arc_model_lab.config import Settings
 from arc_model_lab.domain import (
@@ -33,11 +33,11 @@ def _model(name: str = "m") -> Model:
 def _patch_model_repo(monkeypatch: pytest.MonkeyPatch, model: Model | None) -> MagicMock:
     repository = MagicMock()
     # The service resolves through require_by_name, which returns the model or
-    # raises ModelNotFoundError; mirror that contract on the mocked seam.
+    # raises ModelNotFoundError; mirror that contract on the mocked (async) seam.
     if model is None:
-        repository.require_by_name.side_effect = ModelNotFoundError("Model not found")
+        repository.require_by_name = AsyncMock(side_effect=ModelNotFoundError("Model not found"))
     else:
-        repository.require_by_name.return_value = model
+        repository.require_by_name = AsyncMock(return_value=model)
     monkeypatch.setattr(inference_service_module, "ModelRepository", lambda session: repository)
     return repository
 
@@ -45,7 +45,7 @@ def _patch_model_repo(monkeypatch: pytest.MonkeyPatch, model: Model | None) -> M
 def _patch_inference_repo(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     added: list[object] = []
     repository = MagicMock()
-    repository.add.side_effect = lambda inference: (added.append(inference), inference)[1]
+    repository.add = AsyncMock(side_effect=lambda inference: (added.append(inference), inference)[1])
     monkeypatch.setattr(inference_service_module, "InferenceRepository", lambda session: repository)
     return added
 
@@ -64,16 +64,18 @@ class _CapturingModelService(ModelService):
         return GenerationResult(prompt="p", output_text="o", prompt_tokens=1, completion_tokens=1, latency_ms=1)
 
 
-def test_summarize_raises_when_model_missing(fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_summarize_raises_when_model_missing(
+    fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repository = _patch_model_repo(monkeypatch, None)
     service = InferenceService(fake_model_service)
 
     with pytest.raises(ModelNotFoundError):
-        service.summarize(MagicMock(spec=Session), model_name="missing", input_text="hello")
+        await service.summarize(MagicMock(spec=AsyncSession), model_name="missing", input_text="hello")
     repository.require_by_name.assert_called_once_with("missing")
 
 
-def test_summarize_raises_when_model_inactive(
+async def test_summarize_raises_when_model_inactive(
     fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     inactive = Model(
@@ -82,24 +84,28 @@ def test_summarize_raises_when_model_inactive(
     _patch_model_repo(monkeypatch, inactive)
 
     with pytest.raises(ModelInactiveError):
-        InferenceService(fake_model_service).summarize(MagicMock(spec=Session), model_name="m", input_text="hello")
+        await InferenceService(fake_model_service).summarize(
+            MagicMock(spec=AsyncSession), model_name="m", input_text="hello"
+        )
 
 
-def test_summarize_rejects_oversized_input(fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_summarize_rejects_oversized_input(
+    fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch_model_repo(monkeypatch, _model())
     service = InferenceService(fake_model_service)
 
     with pytest.raises(InputTooLargeError):
-        service.summarize(MagicMock(spec=Session), model_name="m", input_text="x" * 60_000)
+        await service.summarize(MagicMock(spec=AsyncSession), model_name="m", input_text="x" * 60_000)
 
 
-def test_summarize_persists_inference(fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_summarize_persists_inference(fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch) -> None:
     model = _model()
     _patch_model_repo(monkeypatch, model)
     added = _patch_inference_repo(monkeypatch)
 
-    inference = InferenceService(fake_model_service).summarize(
-        MagicMock(spec=Session), model_name="m", input_text="hello"
+    inference = await InferenceService(fake_model_service).summarize(
+        MagicMock(spec=AsyncSession), model_name="m", input_text="hello"
     )
 
     assert inference.model_id == model.id
@@ -107,14 +113,14 @@ def test_summarize_persists_inference(fake_model_service: ModelService, monkeypa
     assert added[0] is inference
 
 
-def test_run_for_experiment_uses_the_given_model(
+async def test_run_for_experiment_uses_the_given_model(
     fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     added = _patch_inference_repo(monkeypatch)
     model = _model()
 
-    inference = InferenceService(fake_model_service).run_for_experiment(
-        MagicMock(spec=Session),
+    inference = await InferenceService(fake_model_service).run_for_experiment(
+        MagicMock(spec=AsyncSession),
         model=model,
         input_text="hello",
         config=_config(),
@@ -127,7 +133,7 @@ def test_run_for_experiment_uses_the_given_model(
     assert added[0] is inference
 
 
-def test_summarize_uses_server_default_config_when_temperature_omitted(
+async def test_summarize_uses_server_default_config_when_temperature_omitted(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _patch_model_repo(monkeypatch, _model())
@@ -135,13 +141,13 @@ def test_summarize_uses_server_default_config_when_temperature_omitted(
     server = settings.model_copy(update={"temperature": 0.5, "max_output_tokens": 512})
     model_service = _CapturingModelService(server)
 
-    InferenceService(model_service).summarize(MagicMock(spec=Session), model_name="m", input_text="hello")
+    await InferenceService(model_service).summarize(MagicMock(spec=AsyncSession), model_name="m", input_text="hello")
 
     # No caller temperature: the whole config comes from the server settings.
     assert model_service.configs == [GenerationConfig(temperature=0.5, max_output_tokens=512)]
 
 
-def test_summarize_applies_caller_temperature_over_server_default(
+async def test_summarize_applies_caller_temperature_over_server_default(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _patch_model_repo(monkeypatch, _model())
@@ -149,8 +155,8 @@ def test_summarize_applies_caller_temperature_over_server_default(
     server = settings.model_copy(update={"temperature": 0.5, "max_output_tokens": 512})
     model_service = _CapturingModelService(server)
 
-    InferenceService(model_service).summarize(
-        MagicMock(spec=Session), model_name="m", input_text="hello", temperature=0.9
+    await InferenceService(model_service).summarize(
+        MagicMock(spec=AsyncSession), model_name="m", input_text="hello", temperature=0.9
     )
 
     # Caller temperature wins; output length stays the server default.

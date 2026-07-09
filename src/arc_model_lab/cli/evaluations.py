@@ -13,16 +13,18 @@ command is safe to re-run.
 from __future__ import annotations
 
 import argparse
+import asyncio
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from arc_model_lab.clients.arc_eval_client import EvalSettings, build_arc_eval_client
 from arc_model_lab.config import get_settings
-from arc_model_lab.db.base import create_engine_from_url, create_session_factory
+from arc_model_lab.db.base import create_async_engine_from_url, create_async_session_factory
 from arc_model_lab.db.repositories import InferenceRepository
 from arc_model_lab.domain import EvaluationOutcome, EvaluationStatus
+from arc_model_lab.services.evaluation_batch import evaluate_batch
 from arc_model_lab.services.evaluation_service import EvaluationService
 
 _DEFAULT_LIMIT = 100
@@ -30,8 +32,8 @@ _DEFAULT_LIMIT = 100
 _DEFAULT_METRICS = ("faithfulness", "answer_relevance")
 
 
-def _session_factory() -> sessionmaker[Session]:
-    return create_session_factory(create_engine_from_url(get_settings().database_url))
+def _session_factory() -> async_sessionmaker[AsyncSession]:
+    return create_async_session_factory(create_async_engine_from_url(get_settings().database_url))
 
 
 def _evaluation_service() -> EvaluationService:
@@ -53,19 +55,19 @@ def _print_outcome(inference_id: UUID, outcome: EvaluationOutcome) -> None:
     print(f"{inference_id}\t{outcome.status}\t{scores}")
 
 
-def _run(inference_id: UUID, metrics: list[str]) -> None:
+async def _run(inference_id: UUID, metrics: list[str]) -> None:
     service = _evaluation_service()
-    with _session_factory()() as session:
-        inference = InferenceRepository(session).get(inference_id)
+    async with _session_factory()() as session:
+        inference = await InferenceRepository(session).get(inference_id)
         if inference is None:
             raise SystemExit(f"Inference not found: {inference_id}")
-        outcome = service.evaluate_inference(session, inference, metrics)
+        outcome = await service.evaluate_inference(session, inference, metrics)
     _print_outcome(inference_id, outcome)
     if outcome.status is EvaluationStatus.FAILED:
         raise SystemExit(1)
 
 
-def _process_batch(
+async def _process_batch(
     *,
     created_after: datetime | None,
     created_before: datetime | None,
@@ -73,19 +75,16 @@ def _process_batch(
     metrics: list[str],
 ) -> None:
     service = _evaluation_service()
-    completed = 0
-    failed = 0
-    with _session_factory()() as session:
-        pending = InferenceRepository(session).list_unevaluated(
+    concurrency = EvalSettings().concurrency
+    async with _session_factory()() as session:
+        pending = await InferenceRepository(session).list_unevaluated(
             limit=limit, created_after=created_after, created_before=created_before
         )
-        for inference in pending:
-            outcome = service.evaluate_inference(session, inference, metrics)
-            _print_outcome(inference.id, outcome)
-            if outcome.status is EvaluationStatus.COMPLETED:
-                completed += 1
-            else:
-                failed += 1
+        results = await evaluate_batch(session, service, pending, metrics=metrics, concurrency=concurrency)
+    completed = sum(1 for result in results if result.outcome.status is EvaluationStatus.COMPLETED)
+    failed = len(results) - completed
+    for result in results:
+        _print_outcome(result.inference_id, result.outcome)
     print(f"processed={len(pending)} completed={completed} failed={failed}")
     if failed:
         raise SystemExit(1)
@@ -112,11 +111,13 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     if args.command == "run":
-        _run(args.inference_id, args.metrics)
+        asyncio.run(_run(args.inference_id, args.metrics))
     elif args.command == "replay":
-        _process_batch(created_after=None, created_before=None, limit=args.limit, metrics=args.metrics)
+        asyncio.run(_process_batch(created_after=None, created_before=None, limit=args.limit, metrics=args.metrics))
     elif args.command == "backfill":  # pragma: no branch - argparse restricts the command set
-        _process_batch(created_after=args.since, created_before=args.until, limit=args.limit, metrics=args.metrics)
+        asyncio.run(
+            _process_batch(created_after=args.since, created_before=args.until, limit=args.limit, metrics=args.metrics)
+        )
 
 
 if __name__ == "__main__":

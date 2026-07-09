@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import Depends, Request
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.experiment_service import ExperimentService
@@ -14,14 +14,14 @@ from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_catalog_service import ModelCatalogService
 
 
-def get_session(request: Request) -> Iterator[Session]:
-    """Yield a request-scoped session; the ``with`` block rolls back on error.
+async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
+    """Yield a request-scoped async session; the context rolls back on error.
 
-    The service layer owns the commit, so a row is guaranteed to be persisted
-    before any success response is returned.
+    The service layer owns the commit, so a row is persisted before any success
+    response is returned.
     """
-    session_factory: sessionmaker[Session] = request.app.state.session_factory
-    with session_factory() as session:
+    session_factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with session_factory() as session:
         yield session
 
 

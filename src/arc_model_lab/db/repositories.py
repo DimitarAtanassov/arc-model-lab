@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlalchemy import exists, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from arc_model_lab.db.models import (
     EvaluationResultRecord,
@@ -39,76 +39,78 @@ from arc_model_lab.domain import (
 
 
 class ModelRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    def get_by_name(self, name: str) -> Model | None:
-        record = self._session.scalar(select(ModelRecord).where(ModelRecord.name == name))
+    async def get_by_name(self, name: str) -> Model | None:
+        record = await self._session.scalar(select(ModelRecord).where(ModelRecord.name == name))
         return _to_model(record) if record is not None else None
 
-    def get_by_id(self, model_id: UUID) -> Model | None:
-        record = self._session.get(ModelRecord, model_id)
+    async def get_by_id(self, model_id: UUID) -> Model | None:
+        record = await self._session.get(ModelRecord, model_id)
         return _to_model(record) if record is not None else None
 
-    def require_by_name(self, name: str) -> Model:
+    async def require_by_name(self, name: str) -> Model:
         """Return the model with this name, or raise ``ModelNotFoundError`` (404)."""
-        model = self.get_by_name(name)
+        model = await self.get_by_name(name)
         if model is None:
             raise ModelNotFoundError(f"Model not found: {name}")
         return model
 
-    def require_by_id(self, model_id: UUID) -> Model:
+    async def require_by_id(self, model_id: UUID) -> Model:
         """Return the model with this id, or raise ``ModelNotFoundError`` (404)."""
-        model = self.get_by_id(model_id)
+        model = await self.get_by_id(model_id)
         if model is None:
             raise ModelNotFoundError(f"Model not found: {model_id}")
         return model
 
-    def add(self, model: Model) -> Model:
+    async def add(self, model: Model) -> Model:
         self._session.add(_to_model_record(model))
-        self._session.flush()
+        await self._session.flush()
         return model
 
-    def list_all(self) -> list[Model]:
-        records = self._session.scalars(select(ModelRecord).order_by(ModelRecord.name)).all()
+    async def list_all(self) -> list[Model]:
+        records = (await self._session.scalars(select(ModelRecord).order_by(ModelRecord.name))).all()
         return [_to_model(record) for record in records]
 
-    def upsert(self, model: Model) -> Model:
-        record = self._session.scalar(select(ModelRecord).where(ModelRecord.name == model.name))
+    async def upsert(self, model: Model) -> Model:
+        record = await self._session.scalar(select(ModelRecord).where(ModelRecord.name == model.name))
         if record is None:
-            return self.add(model)
+            return await self.add(model)
         record.provider = model.provider
         record.model_id = model.model_id
         record.tokenizer_id = model.tokenizer_id
         record.revision = model.revision
         record.adapter_path = model.adapter_path
         record.status = model.status
-        self._session.flush()
+        await self._session.flush()
+        await self._session.refresh(record)
         return _to_model(record)
 
-    def set_status(self, name: str, status: ModelStatus) -> Model | None:
-        record = self._session.scalar(select(ModelRecord).where(ModelRecord.name == name))
+    async def set_status(self, name: str, status: ModelStatus) -> Model | None:
+        record = await self._session.scalar(select(ModelRecord).where(ModelRecord.name == name))
         if record is None:
             return None
         record.status = status
-        self._session.flush()
+        await self._session.flush()
+        await self._session.refresh(record)
         return _to_model(record)
 
 
 class InferenceRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    def add(self, inference: Inference) -> Inference:
+    async def add(self, inference: Inference) -> Inference:
         self._session.add(_to_inference_record(inference))
-        self._session.flush()
+        await self._session.flush()
         return inference
 
-    def get(self, inference_id: UUID) -> Inference | None:
-        record = self._session.get(InferenceRecord, inference_id)
+    async def get(self, inference_id: UUID) -> Inference | None:
+        record = await self._session.get(InferenceRecord, inference_id)
         return _to_inference(record) if record is not None else None
 
-    def list_unevaluated(
+    async def list_unevaluated(
         self,
         *,
         limit: int,
@@ -127,26 +129,28 @@ class InferenceRepository:
         if created_before is not None:
             stmt = stmt.where(InferenceRecord.created_at < created_before)
         stmt = stmt.order_by(InferenceRecord.created_at).limit(limit)
-        records = self._session.scalars(stmt).all()
+        records = (await self._session.scalars(stmt)).all()
         return [_to_inference(record) for record in records]
 
-    def list_recent(self, limit: int) -> list[Inference]:
+    async def list_recent(self, limit: int) -> list[Inference]:
         """Return the most recent inferences, newest first (bounded page size).
 
         Backs the history table. Ordering is by ``created_at`` descending; the
         caller bounds ``limit`` so the collection is never unbounded.
         """
-        records = self._session.scalars(
-            select(InferenceRecord).order_by(InferenceRecord.created_at.desc()).limit(limit)
+        records = (
+            await self._session.scalars(
+                select(InferenceRecord).order_by(InferenceRecord.created_at.desc()).limit(limit)
+            )
         ).all()
         return [_to_inference(record) for record in records]
 
 
 class EvaluationResultRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    def upsert_many(self, results: list[EvaluationResult]) -> list[EvaluationResult]:
+    async def upsert_many(self, results: list[EvaluationResult]) -> list[EvaluationResult]:
         """Insert results, refreshing score/reasoning on the unique key.
 
         The unique key ``(inference_id, metric_name, evaluator_name)`` makes this
@@ -167,15 +171,17 @@ class EvaluationResultRepository:
                 "evaluator_version": insert_stmt.excluded.evaluator_version,
             },
         )
-        self._session.execute(upsert_stmt)
-        self._session.flush()
+        await self._session.execute(upsert_stmt)
+        await self._session.flush()
         return results
 
-    def list_for_inference(self, inference_id: UUID) -> list[EvaluationResult]:
-        records = self._session.scalars(
-            select(EvaluationResultRecord)
-            .where(EvaluationResultRecord.inference_id == inference_id)
-            .order_by(EvaluationResultRecord.metric_name)
+    async def list_for_inference(self, inference_id: UUID) -> list[EvaluationResult]:
+        records = (
+            await self._session.scalars(
+                select(EvaluationResultRecord)
+                .where(EvaluationResultRecord.inference_id == inference_id)
+                .order_by(EvaluationResultRecord.metric_name)
+            )
         ).all()
         return [_to_evaluation_result(record) for record in records]
 
@@ -186,10 +192,10 @@ class ExperimentRepository:
     # integrity violations such as the model_id foreign key.
     _NAME_CONSTRAINT = "uq_experiments_name"
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    def add(self, experiment: Experiment) -> Experiment:
+    async def add(self, experiment: Experiment) -> Experiment:
         """Insert an experiment, mapping a duplicate name to a domain conflict.
 
         The unique constraint is the authoritative guard (including against a
@@ -199,29 +205,31 @@ class ExperimentRepository:
         """
         self._session.add(_to_experiment_record(experiment))
         try:
-            self._session.flush()
+            await self._session.flush()
         except IntegrityError as exc:
             if _violates_constraint(exc, self._NAME_CONSTRAINT):
                 raise ExperimentNameConflictError(f"Experiment name already exists: {experiment.name}") from exc
             raise
         return experiment
 
-    def get(self, experiment_id: UUID) -> Experiment | None:
-        record = self._session.get(ExperimentRecord, experiment_id)
+    async def get(self, experiment_id: UUID) -> Experiment | None:
+        record = await self._session.get(ExperimentRecord, experiment_id)
         return _to_experiment(record) if record is not None else None
 
-    def get_by_name(self, name: str) -> Experiment | None:
-        record = self._session.scalar(select(ExperimentRecord).where(ExperimentRecord.name == name))
+    async def get_by_name(self, name: str) -> Experiment | None:
+        record = await self._session.scalar(select(ExperimentRecord).where(ExperimentRecord.name == name))
         return _to_experiment(record) if record is not None else None
 
-    def list_recent(self, limit: int) -> list[Experiment]:
+    async def list_recent(self, limit: int) -> list[Experiment]:
         """Return the most recent experiments, newest first (bounded page size)."""
-        records = self._session.scalars(
-            select(ExperimentRecord).order_by(ExperimentRecord.created_at.desc()).limit(limit)
+        records = (
+            await self._session.scalars(
+                select(ExperimentRecord).order_by(ExperimentRecord.created_at.desc()).limit(limit)
+            )
         ).all()
         return [_to_experiment(record) for record in records]
 
-    def aggregate_scores(self, experiment_id: UUID) -> list[ExperimentMetricAggregate]:
+    async def aggregate_scores(self, experiment_id: UUID) -> list[ExperimentMetricAggregate]:
         """Average score and count per metric across the experiment's evaluations.
 
         Aggregation joins evaluation results to the experiment through the
@@ -242,7 +250,7 @@ class ExperimentRepository:
             .group_by(EvaluationResultRecord.metric_name)
             .order_by(EvaluationResultRecord.metric_name)
         )
-        rows = self._session.execute(stmt).all()
+        rows = (await self._session.execute(stmt)).all()
         return [
             ExperimentMetricAggregate(
                 metric_name=row.metric_name,
@@ -261,12 +269,12 @@ class ExperimentRunRepository:
     needed here.
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    def add(self, run: ExperimentRun) -> ExperimentRun:
+    async def add(self, run: ExperimentRun) -> ExperimentRun:
         self._session.add(_to_experiment_run_record(run))
-        self._session.flush()
+        await self._session.flush()
         return run
 
 
