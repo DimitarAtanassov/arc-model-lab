@@ -82,7 +82,7 @@ max-args = 6
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["transformers.*", "torch.*"]
+module = ["transformers.*", "torch.*", "yaml"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
