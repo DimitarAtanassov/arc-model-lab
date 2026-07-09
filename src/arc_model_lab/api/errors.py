@@ -14,6 +14,8 @@ from arc_model_lab.domain import (
     ModelInactiveError,
     ModelLoadError,
     ModelNotFoundError,
+    PromptRenderError,
+    PromptTemplateNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,14 @@ async def _generation_error(request: Request, exc: Exception) -> Response:
     return _error(status.HTTP_500_INTERNAL_SERVER_ERROR, "Text generation failed")
 
 
+async def _prompt_template_not_found(request: Request, exc: Exception) -> Response:
+    return _error(status.HTTP_404_NOT_FOUND, str(exc) or "Prompt template not found")
+
+
+async def _prompt_render_error(request: Request, exc: Exception) -> Response:
+    return _error(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc) or "Invalid prompt variables")
+
+
 async def _unhandled(request: Request, exc: Exception) -> Response:
     """Last-resort boundary: log with a correlation id, return a safe 500 body.
 
@@ -85,4 +95,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(InputTooLargeError, _input_too_large)
     app.add_exception_handler(ModelLoadError, _model_load_error)
     app.add_exception_handler(GenerationError, _generation_error)
+    app.add_exception_handler(PromptTemplateNotFoundError, _prompt_template_not_found)
+    app.add_exception_handler(PromptRenderError, _prompt_render_error)
     app.add_exception_handler(Exception, _unhandled)

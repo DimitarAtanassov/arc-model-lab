@@ -21,6 +21,7 @@ from arc_model_lab.db.base import Base, create_async_engine_from_url, create_asy
 from arc_model_lab.db.repositories import ModelRepository
 from arc_model_lab.domain import GenerationConfig, GenerationError, Model, ModelLoadError, Provider
 from arc_model_lab.main import create_app
+from arc_model_lab.prompts import load_prompt_library
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_catalog_service import ModelCatalogService
 from arc_model_lab.services.model_service import ChatMessage, GenerationResult, ModelService
@@ -226,7 +227,7 @@ async def build_app(
     async with session_factory() as session:
         await ModelRepository(session).upsert(_test_model())
         await session.commit()
-    app.dependency_overrides[get_inference_service] = lambda: InferenceService(model_service)
+    app.dependency_overrides[get_inference_service] = lambda: InferenceService(model_service, load_prompt_library())
     # The catalog read service has no I/O seam to fake, so wire the real one into
     # app state the way lifespan does; the read endpoints resolve it from there.
     app.state.model_catalog_service = ModelCatalogService()

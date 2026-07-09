@@ -165,6 +165,52 @@ async def test_run_defaults_to_active_only_when_allow_inactive_omitted(
     assert response.status_code == 409
 
 
+async def test_inference_with_a_prompt_template_returns_201(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body(prompt_template="summarize"))
+    assert response.status_code == 201
+
+
+async def test_inference_with_a_template_and_variables_returns_201(client: AsyncClient) -> None:
+    response = await client.post(
+        "/inference",
+        json=_body(prompt_template="translate", variables={"target_language": "French"}),
+    )
+    assert response.status_code == 201
+
+
+async def test_inference_missing_template_variable_returns_422(client: AsyncClient) -> None:
+    # translate needs target_language; omitting it is a render error, not a 500.
+    response = await client.post("/inference", json=_body(prompt_template="translate"))
+    assert response.status_code == 422
+
+
+async def test_inference_unknown_template_returns_404(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body(prompt_template="does-not-exist"))
+    assert response.status_code == 404
+
+
+async def test_inference_variables_without_a_template_returns_422(client: AsyncClient) -> None:
+    # variables only make sense with a template; the schema rejects the mismatch.
+    response = await client.post("/inference", json=_body(variables={"target_language": "French"}))
+    assert response.status_code == 422
+
+
+async def test_run_endpoint_accepts_a_prompt_template(client: AsyncClient) -> None:
+    response = await client.post(
+        "/v1/inference:run",
+        json={"model_name": _MODEL, "input_text": "hi", "prompt_template": "summarize"},
+    )
+    assert response.status_code == 201
+
+
+async def test_run_endpoint_rejects_variables_without_a_template(client: AsyncClient) -> None:
+    response = await client.post(
+        "/v1/inference:run",
+        json={"model_name": _MODEL, "input_text": "hi", "variables": {"target_language": "French"}},
+    )
+    assert response.status_code == 422
+
+
 async def _persist_inference(
     session_factory: async_sessionmaker[AsyncSession],
     *,

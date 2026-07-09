@@ -8,10 +8,13 @@ from arc_model_lab.domain.exceptions import (
     ModelInactiveError,
     ModelLoadError,
     ModelNotFoundError,
+    PromptRenderError,
+    PromptTemplateNotFoundError,
 )
 from arc_model_lab.domain.generation import GenerationConfig
 from arc_model_lab.domain.inference import Inference
 from arc_model_lab.domain.model import Model
+from arc_model_lab.domain.prompt import PromptInput, PromptTemplate, RenderedPrompt
 
 __all__ = [
     "DomainError",
@@ -26,5 +29,10 @@ __all__ = [
     "ModelLoadError",
     "ModelNotFoundError",
     "ModelStatus",
+    "PromptInput",
+    "PromptRenderError",
+    "PromptTemplate",
+    "PromptTemplateNotFoundError",
     "Provider",
+    "RenderedPrompt",
 ]

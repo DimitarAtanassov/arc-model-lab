@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from arc_model_lab.api.dependencies import get_inference_service, get_session
 from arc_model_lab.api.schemas import InferenceRequest, InferenceResponse
 from arc_model_lab.api.schemas.inference import InferenceListItem, InferenceRunRequest
+from arc_model_lab.domain import PromptInput
 from arc_model_lab.services.inference_service import InferenceService
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -26,10 +27,14 @@ async def infer(
     session: SessionDep,
     service: ServiceDep,
 ) -> InferenceResponse:
-    inference = await service.summarize(
+    inference = await service.infer(
         session,
         model_name=payload.model_name,
-        input_text=payload.input_text,
+        prompt=PromptInput(
+            input_text=payload.input_text,
+            template=payload.prompt_template,
+            variables=payload.variables,
+        ),
         temperature=payload.temperature,
     )
     return InferenceResponse.from_inference(inference)
@@ -54,7 +59,11 @@ async def run_inference(
     inference = await service.run_named(
         session,
         model_name=payload.model_name,
-        input_text=payload.input_text,
+        prompt=PromptInput(
+            input_text=payload.input_text,
+            template=payload.prompt_template,
+            variables=payload.variables,
+        ),
         config=payload.generation_config.to_domain(),
         allow_inactive=payload.allow_inactive,
     )

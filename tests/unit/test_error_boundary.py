@@ -12,9 +12,9 @@ from arc_model_lab.main import create_app
 
 
 class _BoomService:
-    """An inference-service double whose summarize always fails non-domain."""
+    """An inference-service double whose infer always fails non-domain."""
 
-    def summarize(self, *args: object, **kwargs: object) -> object:
+    def infer(self, *args: object, **kwargs: object) -> object:
         raise RuntimeError("unexpected")
 
 
