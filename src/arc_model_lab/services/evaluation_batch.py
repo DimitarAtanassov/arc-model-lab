@@ -1,12 +1,3 @@
-"""Bounded concurrent evaluation of many inferences (the replay/backfill fan-out).
-
-Scoring an inference is a network call to arc-eval; persisting the scores is a DB
-write. This module fans the network step out concurrently under a semaphore, then
-persists serially on the one async session (an ``AsyncSession`` is not safe for
-concurrent use). Upserts are idempotent, so a batch is safe to re-run and safe
-against a duplicate in flight.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -35,12 +26,12 @@ async def evaluate_batch(
     metrics: list[str],
     concurrency: int,
 ) -> list[BatchItemResult]:
-    """Score ``inferences`` concurrently (bounded), then persist each serially.
+    """Score inferences concurrently (bounded), then persist each serially.
 
-    At most ``concurrency`` arc-eval calls are in flight at once. Persistence runs
+    At most concurrency arc-eval calls are in flight at once. Persistence runs
     in input order after scoring completes; each item's outcome mirrors the
     single-inference path (skipped, fail-open failed, or completed). An unknown
-    metric propagates as ``UnknownMetricError`` and aborts the batch, since it is a
+    metric propagates as UnknownMetricError and aborts the batch, since it is a
     caller error that would affect every item.
     """
     semaphore = asyncio.Semaphore(concurrency)

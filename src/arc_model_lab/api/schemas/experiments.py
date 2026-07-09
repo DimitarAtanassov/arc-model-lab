@@ -1,15 +1,3 @@
-"""Request/response contracts for the experiments endpoints.
-
-The run endpoint has its own response (:class:`ExperimentRunResponse`): a run
-produces one inference, links it to the experiment, and, when the run names
-metrics, evaluates it. The response carries the ``experiment_id`` from the run
-context, not from the inference (which is decoupled from experiments).
-``/inference`` returns neither the id nor an evaluation, which keeps the two
-endpoints orthogonal. ``GenerationConfigSchema`` forbids unknown keys, so a knob
-the runtime ignores (for example ``num_beams``) is rejected with 422 at the
-boundary rather than silently dropped.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -117,9 +105,9 @@ class ExperimentRunResponse(BaseModel):
     ) -> ExperimentRunResponse:
         """Shape an experiment run: its inference and, when scored, its evaluation.
 
-        The ``experiment_id`` comes from the run context, not the inference:
+        The experiment_id comes from the run context, not the inference:
         inference is decoupled from experiments and never carries one.
-        ``/inference`` returns neither this id nor an evaluation, which keeps the
+        /inference returns neither this id nor an evaluation, which keeps the
         two endpoints orthogonal.
         """
         return cls(

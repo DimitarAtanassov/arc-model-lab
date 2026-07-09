@@ -1,5 +1,3 @@
-"""SQLAlchemy ORM models. These mirror the domain entities for persistence."""
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -64,7 +62,7 @@ class EvaluationResultRecord(Base):
     """One metric score for one inference, produced by the arc-eval service.
 
     One metric per row (not a JSON blob) so scores stay queryable and indexable.
-    The unique key ``(inference_id, metric_name, evaluator_name)`` makes replay
+    The unique key (inference_id, metric_name, evaluator_name) makes replay
     and backfill idempotent: re-evaluating an inference upserts rather than
     duplicating.
     """
@@ -106,9 +104,9 @@ class ExperimentRecord(Base):
 class ExperimentRunRecord(Base):
     """Links an inference to the experiment that produced it.
 
-    The association lives in its own table, not a column on ``inference``, so an
+    The association lives in its own table, not a column on inference, so an
     inference row never references an experiment: inference stays orthogonal to
-    experiments. ``inference_id`` is unique, so an inference belongs to at most one
+    experiments. inference_id is unique, so an inference belongs to at most one
     experiment run. Both foreign keys cascade on delete, so removing an experiment
     or an inference clears the link without stranding rows.
     """

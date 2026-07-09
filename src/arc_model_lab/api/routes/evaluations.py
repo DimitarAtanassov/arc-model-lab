@@ -1,15 +1,3 @@
-"""The standalone evaluation endpoint: score one existing inference on demand.
-
-Evaluation here is decoupled from experiments. It scores an inference that
-already exists (from ``/inference`` or a prior experiment run) against the
-metrics the request names, and returns the outcome. All scoring, persistence, and
-fail-open behavior live in :class:`EvaluationService`; this module is a thin
-transport adapter, so the same rules apply as inside an experiment run.
-
-Handlers are asynchronous: scoring is a pooled async HTTP call and the DB write is
-async, so the request path is non-blocking end to end.
-"""
-
 from __future__ import annotations
 
 from typing import Annotated
@@ -41,10 +29,10 @@ async def evaluate_inference(
 ) -> EvaluationEnvelope:
     """Score an existing inference against the named metrics.
 
-    Returns the outcome envelope: ``completed`` with a score per metric,
-    ``skipped`` when no evaluator is configured for this environment, or
-    ``failed`` when the evaluator was unreachable (the inference is left
-    untouched). An unknown ``inference_id`` is a 404, as is a metric the evaluator
+    Returns the outcome envelope: completed with a score per metric,
+    skipped when no evaluator is configured for this environment, or
+    failed when the evaluator was unreachable (the inference is left
+    untouched). An unknown inference_id is a 404, as is a metric the evaluator
     does not define. Re-evaluating is safe: scores upsert on the metric key rather
     than duplicate.
     """

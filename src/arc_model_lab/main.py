@@ -1,5 +1,3 @@
-"""Application composition root: wiring, lifespan, and the ASGI ``app`` object."""
-
 from __future__ import annotations
 
 from collections.abc import AsyncIterator

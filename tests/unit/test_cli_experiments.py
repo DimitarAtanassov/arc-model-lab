@@ -1,9 +1,3 @@
-"""Experiment CLI: argparse dispatch (unit) and handler behavior (DB-backed).
-
-Dispatch tests stub the handlers to prove wiring and config assembly. Handler
-tests run against a real Postgres; ``create``/``compare`` never load a model.
-"""
-
 from __future__ import annotations
 
 from uuid import UUID

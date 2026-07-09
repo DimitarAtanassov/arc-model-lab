@@ -1,10 +1,3 @@
-"""Consumer contract tests for the arc-eval ``/v1/evaluate`` boundary.
-
-arc-model-lab cannot import the provider package, so the provider's schema is
-encoded here as a fixture. If arc-eval changes its request or response contract,
-these tests fail and surface the break before production does.
-"""
-
 from __future__ import annotations
 
 import pytest

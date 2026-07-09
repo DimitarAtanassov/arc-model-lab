@@ -1,5 +1,3 @@
-"""The Model domain entity: a loadable inference model and how to reach it."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

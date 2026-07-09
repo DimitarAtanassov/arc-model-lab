@@ -1,11 +1,3 @@
-"""End-to-end evaluation smoke test against a live arc-eval.
-
-Skipped unless ``ARC_EVAL_SERVICE_URL`` points at a reachable arc-eval. It
-fabricates an inference (no model weights are loaded) and evaluates it, so it
-verifies the real HTTP contract and persistence without a GPU. Run with
-``make eval.smoke``.
-"""
-
 from __future__ import annotations
 
 import os

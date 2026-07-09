@@ -1,10 +1,3 @@
-"""API behavior for the experiments endpoints.
-
-These reuse the shared ``client`` fixture: ``get_experiment_service`` composes the
-same overridden inference and evaluation services, so runs use the fake model
-runtime and evaluation is disabled (no arc-eval needed).
-"""
-
 from __future__ import annotations
 
 import pytest

@@ -1,17 +1,3 @@
-"""Shared test fixtures and model-runtime fakes.
-
-The real model runtime is never loaded in tests: ``FakeModelService`` overrides
-``generate`` so CI never downloads weights. A real Postgres backs every
-DB-touching test, via a testcontainer in CI or an ephemeral local cluster
-(on-PATH ``initdb``/``pg_ctl``) when the container registry is blocked; the
-DB-backed suite skips only when neither is available.
-
-Async harness: the app is exercised through ``httpx.AsyncClient`` over an
-``ASGITransport`` so requests, the async engine, and the test share one event
-loop. Schema creation and per-test truncation use a throwaway sync engine, which
-keeps that setup off the event loop and avoids cross-loop errors.
-"""
-
 from __future__ import annotations
 
 import os
@@ -97,11 +83,11 @@ def _free_port() -> int:
 
 
 def _start_testcontainer() -> tuple[str, Callable[[], None]] | None:
-    """Start Postgres in a container, or return ``None`` when unavailable.
+    """Start Postgres in a container, or return None when unavailable.
 
-    The canonical CI path. Returns ``None`` when the library is missing, the
+    The canonical CI path. Returns None when the library is missing, the
     Docker daemon is down, or the image registry is blocked. Set
-    ``ARC_SKIP_TESTCONTAINER=1`` to skip the attempt outright in known-blocked
+    ARC_SKIP_TESTCONTAINER=1 to skip the attempt outright in known-blocked
     environments and fall straight through to the local cluster.
     """
     if os.environ.get("ARC_SKIP_TESTCONTAINER"):
@@ -119,10 +105,10 @@ def _start_testcontainer() -> tuple[str, Callable[[], None]] | None:
 
 
 def _start_local_postgres() -> tuple[str, Callable[[], None]] | None:
-    """Start an ephemeral cluster with on-PATH ``initdb``/``pg_ctl``, or ``None``.
+    """Start an ephemeral cluster with on-PATH initdb/pg_ctl, or None.
 
     A dev fallback for machines where the container registry is blocked. Real
-    Postgres in a temp dir on a random port, discarded at session end; ``None``
+    Postgres in a temp dir on a random port, discarded at session end; None
     when the binaries are not installed.
     """
     initdb = shutil.which("initdb")
@@ -209,7 +195,7 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 def _isolate_db(request: pytest.FixtureRequest) -> None:
     """Truncate all tables before any DB-touching test.
 
-    Runs on a throwaway sync engine (not the async ``session_factory``) so it has
+    Runs on a throwaway sync engine (not the async session_factory) so it has
     no event-loop or fixture-finalization coupling and simply resets state before
     each test that pulls in the database.
     """
@@ -236,8 +222,8 @@ async def build_app(
 ) -> FastAPI:
     """Build an app wired to a test session factory and a fake model runtime.
 
-    The catalog is seeded with one active model (``_TEST_MODEL_NAME``); an
-    ``/inference`` request names it. A request that names an absent model gets a
+    The catalog is seeded with one active model (_TEST_MODEL_NAME); an
+    /inference request names it. A request that names an absent model gets a
     404 from the model lookup.
     """
     app = create_app()

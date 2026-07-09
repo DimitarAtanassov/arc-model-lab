@@ -1,13 +1,3 @@
-"""Evaluation domain entities: one metric score for one inference.
-
-An :class:`EvaluationResult` is the durable quality signal produced by the
-``arc-eval`` service for a single inference. One metric per row (not a JSON blob)
-so scores can be queried, indexed, aggregated, and backfilled independently. The
-:class:`EvaluationOutcome` is the transient result of an evaluation attempt: it
-carries the :class:`~arc_model_lab.domain.enums.EvaluationStatus` so callers can
-distinguish a completed run from a fail-open miss or a skipped one.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -33,9 +23,9 @@ class EvaluationResult:
 class EvaluationOutcome:
     """The result of one evaluation attempt for one inference.
 
-    ``results`` is empty unless ``status`` is ``COMPLETED``. A ``FAILED`` outcome
+    results is empty unless status is COMPLETED. A FAILED outcome
     means the eval service was unreachable or returned something unparseable and
-    the caller chose to fail open; ``SKIPPED`` means evaluation was not wired for
+    the caller chose to fail open; SKIPPED means evaluation was not wired for
     this environment.
     """
 

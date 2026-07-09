@@ -1,13 +1,3 @@
-"""Experiment CLI: create, run, compare.
-
-python -m arc_model_lab.cli.experiments create --name exp-a --model-name qwen2.5-1.5b-instruct
-python -m arc_model_lab.cli.experiments run --experiment-id <uuid> --input-text "..."
-python -m arc_model_lab.cli.experiments compare --experiment-id <uuid> --other-id <uuid>
-
-``run`` loads the model and generates (like ``model smoke``); ``create`` and
-``compare`` only touch the database.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -47,7 +37,7 @@ async def _in_session(operation: Callable[[AsyncSession], Awaitable[_T]]) -> _T:
     """Run a session-scoped operation, surfacing domain errors as clean CLI exits.
 
     Keeps the subcommands from each re-deriving how a bad id or a conflict should
-    look to a CLI user: any ``DomainError`` becomes a one-line ``SystemExit`` rather
+    look to a CLI user: any DomainError becomes a one-line SystemExit rather
     than a traceback.
     """
     try:

@@ -1,14 +1,3 @@
-"""The Experiment domain entity: a named, reproducible run configuration.
-
-An experiment pins a catalog model and a :class:`GenerationConfig`. Running it
-produces an inference and (when metrics are named) its evaluation; the inference
-is linked back to the experiment through an :class:`ExperimentRun` association,
-not a column on the inference, so results are comparable in plain SQL while
-inference stays orthogonal to experiments.
-The caller of ``/inference`` never chooses a model; an experiment is an
-engineer-owned construct that runs its own configuration server-side.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -32,7 +21,7 @@ class Experiment:
 class ExperimentRun:
     """Associates one inference with the experiment that produced it.
 
-    The link lives here, not on :class:`~arc_model_lab.domain.inference.Inference`,
+    The link lives here, not on Inference,
     so inference stays orthogonal to experiments: an inference never references an
     experiment, and this association is written only when a run executes under the
     experiment endpoint.

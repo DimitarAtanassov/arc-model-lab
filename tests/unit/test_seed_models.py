@@ -1,10 +1,3 @@
-"""Seed loader: validation rules, the ``--check`` path, and a real DB write.
-
-The loader is pure and stdlib-only, so validation is unit-tested with temp JSON
-files. ``seed`` itself opens its own engine, so it is exercised once against a
-real Postgres to prove rows are committed.
-"""
-
 from __future__ import annotations
 
 import json

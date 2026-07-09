@@ -1,5 +1,3 @@
-"""Database engine, session factory, and declarative base."""
-
 from __future__ import annotations
 
 from sqlalchemy import MetaData
@@ -28,7 +26,7 @@ class Base(DeclarativeBase):
 def create_async_engine_from_url(url: str, *, echo: bool = False) -> AsyncEngine:
     """Create the async engine used by the app's request path.
 
-    The DSN is the same ``postgresql+psycopg://`` URL as the sync engine: psycopg3
+    The DSN is the same postgresql+psycopg:// URL as the sync engine: psycopg3
     drives both, so async adoption needs no second driver and Alembic keeps running
     migrations synchronously against the same database.
     """

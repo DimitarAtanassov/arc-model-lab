@@ -1,12 +1,3 @@
-"""The inference endpoint: run one model, shape the output.
-
-Inference is standalone: it never evaluates and never runs under an experiment,
-so the response carries neither scores nor an experiment id. Evaluation lives in
-the experiment flow. The caller names the model and may set the sampling
-temperature; an omitted temperature and the output length fall back to the
-server default.
-"""
-
 from __future__ import annotations
 
 from typing import Annotated

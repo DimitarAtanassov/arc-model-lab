@@ -1,9 +1,3 @@
-"""Repository round-trips against a real Postgres.
-
-Covers the mapping in both directions and the found/absent branches that the
-API-level tests do not exercise.
-"""
-
 from __future__ import annotations
 
 from uuid import UUID, uuid4

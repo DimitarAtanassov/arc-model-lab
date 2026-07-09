@@ -1,11 +1,3 @@
-"""Experiment repository and service round-trips against a real Postgres.
-
-Covers the mapping round-trip, the SQL aggregation, model validation on create,
-and that a run links its inference to the experiment through experiment_runs. The
-model runtime is faked (no weight downloads) and evaluation is disabled, so these
-exercise the experiment engine, not arc-eval.
-"""
-
 from __future__ import annotations
 
 from uuid import uuid4

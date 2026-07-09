@@ -1,5 +1,3 @@
-"""Model loading and text generation for a HuggingFace causal instruct model."""
-
 from __future__ import annotations
 
 import time
@@ -42,7 +40,7 @@ def _select_device(preference: Device = "auto") -> str:
     """Resolve the compute device. "auto" prefers CUDA, then MPS, then CPU.
 
     An explicit accelerator that is unavailable is a configuration error rather than a
-    silent CPU fallback, so it surfaces as ``ModelLoadError``.
+    silent CPU fallback, so it surfaces as ModelLoadError.
     """
     if preference == "auto":
         if torch.cuda.is_available():
@@ -66,7 +64,7 @@ def _cache_key(model: Model) -> str:
 class ModelService:
     """Loads catalog models on demand and caches each runtime in process.
 
-    Runtimes are keyed by ``name:revision:adapter`` so several models and revisions
+    Runtimes are keyed by name:revision:adapter so several models and revisions
     coexist. Weights download lazily on first use.
     """
 
@@ -162,9 +160,9 @@ class ModelService:
     def default_generation_config(self) -> GenerationConfig:
         """The server's default decoding config, sourced from settings.
 
-        This is the single runtime source of ``ARC_TEMPERATURE`` and
-        ``ARC_MAX_OUTPUT_TOKENS``: any generation that does not specify its own
-        decoding (``/inference`` without a ``temperature``, or a smoke run) falls
+        This is the single runtime source of ARC_TEMPERATURE and
+        ARC_MAX_OUTPUT_TOKENS: any generation that does not specify its own
+        decoding (/inference without a temperature, or a smoke run) falls
         back to this.
         """
         settings = self._settings

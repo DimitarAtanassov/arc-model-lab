@@ -1,11 +1,3 @@
-"""Unit tests for ExperimentRepository error translation (no database).
-
-The session is faked so these run without Postgres. They prove the repository
-seam maps a duplicate-name violation to ExperimentNameConflictError, lets any
-other IntegrityError (e.g. a foreign key) propagate, and turns corrupt stored
-config into CorruptStoredDataError rather than a client-facing validation error.
-"""
-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -27,7 +19,7 @@ from arc_model_lab.domain import (
 
 
 class _FakeDBAPIError(Exception):
-    """Stand-in for the psycopg error carried on ``IntegrityError.orig``."""
+    """Stand-in for the psycopg error carried on IntegrityError.orig."""
 
     def __init__(self, constraint_name: str) -> None:
         super().__init__(constraint_name)

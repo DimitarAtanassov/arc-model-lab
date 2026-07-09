@@ -1,11 +1,3 @@
-"""The Inference domain entity: one recorded execution of a model.
-
-An inference is standalone: it holds no experiment reference, so inference stays
-orthogonal to experiments. The experiment that produced an inference is recorded
-separately (see :class:`~arc_model_lab.domain.experiment.ExperimentRun`), written
-only when a run executes under the experiment endpoint.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

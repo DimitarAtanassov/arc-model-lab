@@ -1,5 +1,3 @@
-"""Unit test for the catch-all error boundary: safe 500 body plus correlation id."""
-
 from __future__ import annotations
 
 from collections.abc import Iterator

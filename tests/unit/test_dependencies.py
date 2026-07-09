@@ -1,5 +1,3 @@
-"""FastAPI dependency accessors read shared singletons from application state."""
-
 from __future__ import annotations
 
 from collections.abc import AsyncIterator

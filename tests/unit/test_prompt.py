@@ -1,5 +1,3 @@
-"""Unit tests for summarization prompt construction."""
-
 from __future__ import annotations
 
 from arc_model_lab.services.inference_service import build_summary_messages

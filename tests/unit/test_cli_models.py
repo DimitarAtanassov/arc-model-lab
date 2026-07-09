@@ -1,9 +1,3 @@
-"""Model catalog CLI: argparse dispatch (unit) and handler behavior (DB-backed).
-
-Dispatch tests stub the handlers to prove wiring. Handler tests run against a
-real Postgres; ``_smoke`` fakes ``ModelService`` so no weights are loaded.
-"""
-
 from __future__ import annotations
 
 import pytest

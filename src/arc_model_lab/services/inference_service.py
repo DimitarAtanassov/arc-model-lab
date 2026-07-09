@@ -1,5 +1,3 @@
-"""Inference execution: build chat messages, run the model, persist the result."""
-
 from __future__ import annotations
 
 import asyncio
@@ -52,13 +50,13 @@ def build_summary_messages(input_text: str) -> list[ChatMessage]:
 class InferenceService:
     """Runs one summarization request end to end and persists the result.
 
-    The caller names the model: ``/inference`` passes a ``model_name`` that this
-    service resolves against the catalog (a missing name is ``ModelNotFoundError``
-    -> 404; a non-active model is ``ModelInactiveError`` -> 409, so deactivating a
+    The caller names the model: /inference passes a model_name that this
+    service resolves against the catalog (a missing name is ModelNotFoundError
+    -> 404; a non-active model is ModelInactiveError -> 409, so deactivating a
     model takes it out of online serving). Experiments instead pass an
     already-resolved model (bypassing the active gate on purpose, to evaluate
     candidates) and their generation config; the experiment-inference link is
-    recorded separately by ``ExperimentService``, so the inference row stays free
+    recorded separately by ExperimentService, so the inference row stays free
     of any experiment reference. The commit happens here so a row is persisted
     before any success response.
     """
@@ -69,15 +67,15 @@ class InferenceService:
     async def summarize(
         self, session: AsyncSession, *, model_name: str, input_text: str, temperature: float | None = None
     ) -> Inference:
-        """Resolve the named model and run one summarization for ``/inference``.
+        """Resolve the named model and run one summarization for /inference.
 
-        Decoding defaults to the server config (``ARC_TEMPERATURE`` and
-        ``ARC_MAX_OUTPUT_TOKENS``); a caller-supplied ``temperature`` overrides
+        Decoding defaults to the server config (ARC_TEMPERATURE and
+        ARC_MAX_OUTPUT_TOKENS); a caller-supplied temperature overrides
         only that knob. Output length is not caller-controlled here.
 
-        Raises :class:`ModelNotFoundError` (404) when no catalog model has that
-        name, :class:`ModelInactiveError` (409) when the model is not active, and
-        :class:`InputTooLargeError` (413) for an oversized payload.
+        Raises ModelNotFoundError (404) when no catalog model has that
+        name, ModelInactiveError (409) when the model is not active, and
+        InputTooLargeError (413) for an oversized payload.
         """
         model = await self._resolve_model(session, model_name)
         config = self._model_service.default_generation_config()
@@ -95,7 +93,7 @@ class InferenceService:
     ) -> Inference:
         """Run one summarization under an experiment's model and config.
 
-        The inference is stored with no experiment reference; ``ExperimentService``
+        The inference is stored with no experiment reference; ExperimentService
         records the experiment-inference association after this returns.
         """
         return await self._generate_and_store(session, model=model, input_text=input_text, config=config)
@@ -142,7 +140,7 @@ class InferenceService:
     async def get_detail(self, session: AsyncSession, inference_id: UUID) -> InferenceDetailView:
         """Return one inference with its evaluation scores, or raise (404).
 
-        Raises :class:`InferenceNotFoundError` when no inference has that id.
+        Raises InferenceNotFoundError when no inference has that id.
         """
         inference = await InferenceRepository(session).get(inference_id)
         if inference is None:

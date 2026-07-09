@@ -1,10 +1,3 @@
-"""Integration: an experiment run evaluates against a mocked arc-eval.
-
-Exercises the full experiment path (infer -> store -> eval call -> persistence ->
-response) with a real Postgres and an ``httpx.MockTransport`` standing in for
-arc-eval. ``/inference`` itself never evaluates; evaluation lives in the run.
-"""
-
 from __future__ import annotations
 
 import json

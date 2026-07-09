@@ -1,18 +1,3 @@
-"""Generation configuration: the decoding knobs a run may vary.
-
-A run varies two parameters: ``temperature`` (0 is greedy and deterministic,
-above 0 enables sampling) and ``max_output_tokens``. Holding them in a typed
-value object means a caller cannot request a knob the runtime ignores: unknown
-keys are rejected by :meth:`GenerationConfig.from_mapping`, and out-of-range
-values are rejected at construction by ``__post_init__``.
-
-These default constants are the reproducible baseline for experiment configs.
-The server's runtime settings (``Settings.temperature`` and
-``Settings.max_output_tokens``) default from them so "default decoding" has one
-definition; ``/inference`` resolves its default from those runtime settings, not
-from these constants directly.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -34,8 +19,8 @@ _FIELDS = ("temperature", "max_output_tokens")
 class GenerationConfig:
     """The decoding parameters for one generation.
 
-    The default is greedy decoding (``temperature`` 0): a reproducible baseline.
-    Validation runs in ``__post_init__`` so no construction path (HTTP schema,
+    The default is greedy decoding (temperature 0): a reproducible baseline.
+    Validation runs in __post_init__ so no construction path (HTTP schema,
     CLI, or storage) can build an out-of-range config.
     """
 
@@ -57,7 +42,7 @@ class GenerationConfig:
         """Build a config from a raw mapping (stored JSON or other untyped input).
 
         Validates only the keys (unknown or missing); the constructor's
-        ``__post_init__`` owns the value bounds, so no field is validated twice.
+        __post_init__ owns the value bounds, so no field is validated twice.
         This is the entry point for configs that did not pass the typed HTTP schema.
         """
         unknown = sorted(set(data) - set(_FIELDS))

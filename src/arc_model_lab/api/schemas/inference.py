@@ -1,5 +1,3 @@
-"""Request/response contracts for the inference endpoint."""
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -23,8 +21,8 @@ def _preview(text: str, limit: int = _PREVIEW_CHARS) -> str:
 
 class InferenceRequest(BaseModel):
     # The caller names the model and may set the sampling temperature; when it is
-    # omitted the server default (``ARC_TEMPERATURE``) applies. ``extra="forbid"``
-    # rejects an unknown field (including ``max_output_tokens``, a server-only
+    # omitted the server default (ARC_TEMPERATURE) applies. extra="forbid"
+    # rejects an unknown field (including max_output_tokens, a server-only
     # knob) with 422 rather than silently ignoring it.
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
@@ -58,7 +56,7 @@ class InferenceResponse(BaseModel):
     def from_inference(cls, inference: Inference) -> InferenceResponse:
         """Shape the pure-inference response.
 
-        No experiment id and no evaluation: ``/inference`` neither runs under an
+        No experiment id and no evaluation: /inference neither runs under an
         experiment nor scores its output. Those belong to the experiment flow.
         """
         return cls.model_validate(inference)

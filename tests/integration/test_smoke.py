@@ -1,5 +1,3 @@
-"""Full-stack smoke test: API -> service -> repository -> Postgres."""
-
 from __future__ import annotations
 
 import pytest

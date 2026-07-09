@@ -1,5 +1,3 @@
-"""Unit tests for experiment API schemas."""
-
 from __future__ import annotations
 
 from arc_model_lab.api.schemas.experiments import MetricAggregateOut

@@ -1,11 +1,3 @@
-"""The experiments endpoints: create, fetch, run, and compare run configurations.
-
-A run infers under the experiment's model and decoding config, stores the
-inference, then scores it via arc-eval when the run names metrics. All
-persistence and orchestration live in :class:`ExperimentService`; this module is
-a thin transport adapter.
-"""
-
 from __future__ import annotations
 
 from typing import Annotated

@@ -1,5 +1,3 @@
-"""Domain errors. The API layer maps these to HTTP status codes."""
-
 from __future__ import annotations
 
 
@@ -14,7 +12,7 @@ class ModelNotFoundError(DomainError):
 class ModelInactiveError(DomainError):
     """The requested model exists but is not active for online inference.
 
-    ``/inference`` serves only active models, so deactivating a model takes it out
+    /inference serves only active models, so deactivating a model takes it out
     of production serving (409). Experiments deliberately bypass this gate so a
     candidate model can be evaluated before it is activated.
     """
@@ -43,7 +41,7 @@ class EvaluationError(DomainError):
 class UnknownMetricError(DomainError):
     """A requested evaluation metric is not defined by the evaluation service.
 
-    Distinct from :class:`EvaluationError`: an unknown metric is a caller mistake
+    Distinct from EvaluationError: an unknown metric is a caller mistake
     (surfaced as 404), not an infrastructure failure that evaluation fails open on.
     """
 
@@ -60,7 +58,7 @@ class InvalidGenerationConfigError(DomainError):
     """A generation config names an unknown knob or an invalid value.
 
     A client-boundary validation error (422). Its read-path counterpart is
-    :class:`CorruptStoredDataError`: the same failure on data loaded from storage
+    CorruptStoredDataError: the same failure on data loaded from storage
     is a server fault (500), not a client mistake.
     """
 

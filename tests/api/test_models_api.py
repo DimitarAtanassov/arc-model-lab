@@ -1,9 +1,3 @@
-"""API behavior for the model-catalog read endpoints.
-
-The shared ``client`` fixture seeds one active model (``test-model``); these
-tests read it back through the HTTP surface.
-"""
-
 from __future__ import annotations
 
 import pytest

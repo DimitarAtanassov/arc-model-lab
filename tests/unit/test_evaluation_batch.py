@@ -1,5 +1,3 @@
-"""Unit tests for the bounded batch evaluation fan-out."""
-
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +16,7 @@ def _inference() -> Inference:
 class _RecordingService:
     """Fake service recording peak concurrency and persistence order.
 
-    Every inference scores COMPLETED unless its id is in ``fail_ids``. ``score``
+    Every inference scores COMPLETED unless its id is in fail_ids. score
     tracks how many calls overlap so a test can assert the semaphore bound.
     """
 

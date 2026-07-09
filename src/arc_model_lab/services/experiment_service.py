@@ -1,17 +1,3 @@
-"""Experiment application service: create, run, and compare run configurations.
-
-An experiment run composes inference and evaluation directly: it runs the
-experiment's model and generation config, persists the inference, then (when the
-run names metrics) scores it via arc-eval and persists the scores, and finally
-records the experiment-inference association. Inference itself carries no
-experiment reference; comparison is plain SQL aggregation over that association
-and the evaluation rows, not an in-memory join.
-
-The experiment's model is resolved by name on create and only required to exist,
-not to be active: an experiment deliberately targets a chosen model (possibly a
-candidate), unlike the deployed-model default.
-"""
-
 from __future__ import annotations
 
 import logging

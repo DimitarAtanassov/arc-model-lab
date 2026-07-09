@@ -1,5 +1,3 @@
-"""Maps domain errors to HTTP responses with safe, client-facing messages."""
-
 from __future__ import annotations
 
 import logging
@@ -83,7 +81,7 @@ async def _generation_error(request: Request, exc: Exception) -> Response:
 async def _unhandled(request: Request, exc: Exception) -> Response:
     """Last-resort boundary: log with a correlation id, return a safe 500 body.
 
-    The real cause stays in the server log (keyed by ``correlation_id``); the
+    The real cause stays in the server log (keyed by correlation_id); the
     client gets a generic message and the same id to quote in a support request.
     """
     correlation_id = str(uuid4())

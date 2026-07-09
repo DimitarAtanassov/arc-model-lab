@@ -1,10 +1,3 @@
-"""The model-catalog read endpoints: list the catalog and fetch one entry by name.
-
-Reads only. The catalog is populated out of band (the seed script and the models
-CLI); this surface exposes it to the console. Handlers are asynchronous; reads
-are non-blocking async DB queries.
-"""
-
 from __future__ import annotations
 
 from typing import Annotated

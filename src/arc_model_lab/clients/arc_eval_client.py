@@ -1,17 +1,3 @@
-"""HTTP client for the ``arc-eval`` service and its wire contract.
-
-This is the outbound boundary: ``arc-model-lab`` is a *consumer* of ``arc-eval``,
-so it owns its own copy of the request/response DTOs rather than importing the
-provider's package. Keeping the contract here means a provider change surfaces as
-a failing contract test, not a silent runtime break.
-
-The client is deliberately concrete (no ``Protocol``): tests drive it through an
-``httpx.MockTransport`` rather than a hand-rolled interface. Every failure mode
-(transport error, non-2xx status, non-JSON body, unexpected schema) collapses to
-:class:`~arc_model_lab.domain.EvaluationError`, so the service layer has a single
-exception to reason about when it decides whether to fail open.
-"""
-
 from __future__ import annotations
 
 import httpx
@@ -37,10 +23,10 @@ class EvalMetadata(BaseModel):
 
 
 class EvalRequest(BaseModel):
-    """The outbound body for ``POST /v1/evaluate``.
+    """The outbound body for POST /v1/evaluate.
 
-    Mirrors the arc-eval ``/v1/evaluate`` contract: ``metrics``, ``prompt``, and
-    ``metadata`` are all required, and there is no task classification.
+    Mirrors the arc-eval /v1/evaluate contract: metrics, prompt, and
+    metadata are all required, and there is no task classification.
     """
 
     input_text: str
@@ -53,7 +39,7 @@ class EvalRequest(BaseModel):
 class EvalMetricResult(BaseModel):
     """One scored metric in an arc-eval response.
 
-    ``score`` is intentionally unbounded here: we are liberal in what we accept
+    score is intentionally unbounded here: we are liberal in what we accept
     from the provider and let arc-eval own the 0..1 invariant.
     """
 
@@ -67,7 +53,7 @@ class EvalMetricResult(BaseModel):
 class EvalResponse(BaseModel):
     """The arc-eval response body: only metrics that scored successfully.
 
-    ``contract_version`` is optional so an older provider that omits it still
+    contract_version is optional so an older provider that omits it still
     parses; when present it lets a caller detect provider drift.
     """
 
@@ -78,8 +64,8 @@ class EvalResponse(BaseModel):
 class EvalSettings(BaseSettings):
     """Environment-driven configuration for the arc-eval integration.
 
-    Namespaced under ``ARC_EVAL_`` so it composes with the app's ``ARC_`` settings
-    without touching them. An empty ``service_url`` means evaluation is not wired
+    Namespaced under ARC_EVAL_ so it composes with the app's ARC_ settings
+    without touching them. An empty service_url means evaluation is not wired
     for this environment and requests are skipped rather than failed.
     """
 
@@ -98,7 +84,7 @@ class EvalSettings(BaseSettings):
 
 
 class ArcEvalClient:
-    """Asynchronous client for the arc-eval ``/v1/evaluate`` endpoint."""
+    """Asynchronous client for the arc-eval /v1/evaluate endpoint."""
 
     def __init__(self, http_client: httpx.AsyncClient) -> None:
         self._http = http_client
@@ -106,8 +92,8 @@ class ArcEvalClient:
     async def evaluate(self, request: EvalRequest) -> EvalResponse:
         """Score one interaction.
 
-        Raises :class:`UnknownMetricError` when arc-eval does not define a
-        requested metric (a 404, a caller error), and :class:`EvaluationError`
+        Raises UnknownMetricError when arc-eval does not define a
+        requested metric (a 404, a caller error), and EvaluationError
         for every other failure (transport, non-2xx, non-JSON, unexpected schema)
         so the service layer has a single fail-open signal to reason about.
         """
@@ -139,7 +125,7 @@ class ArcEvalClient:
 
 
 def build_arc_eval_client(settings: EvalSettings) -> ArcEvalClient | None:
-    """Build a client from settings, or ``None`` when no service url is configured."""
+    """Build a client from settings, or None when no service url is configured."""
     if not settings.service_url:
         return None
     http_client = httpx.AsyncClient(base_url=settings.service_url, timeout=settings.timeout_seconds)
@@ -147,7 +133,7 @@ def build_arc_eval_client(settings: EvalSettings) -> ArcEvalClient | None:
 
 
 def _error_detail(response: httpx.Response) -> str | None:
-    """Best-effort ``detail`` string from an arc-eval error body."""
+    """Best-effort detail string from an arc-eval error body."""
     try:
         payload = response.json()
     except ValueError:

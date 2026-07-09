@@ -1,5 +1,3 @@
-"""Unit tests for EvaluationService branching (skip, fail-open) and request build."""
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock

@@ -1,5 +1,3 @@
-"""Unit tests for the arc-eval HTTP client and its failure modes."""
-
 from __future__ import annotations
 
 import json

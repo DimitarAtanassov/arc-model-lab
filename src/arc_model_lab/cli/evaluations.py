@@ -1,15 +1,3 @@
-"""Evaluation CLI: run, replay, backfill.
-
-python -m arc_model_lab.cli.evaluations run --inference-id <uuid>
-python -m arc_model_lab.cli.evaluations replay --limit 100
-python -m arc_model_lab.cli.evaluations backfill --since 2026-01-01 --until 2026-02-01 --limit 500
-
-``replay`` and ``backfill`` are fail-closed per item: a failed evaluation is
-counted and the run continues, and the command exits non-zero if any item
-failed. Evaluations are idempotent (upsert on the unique metric key), so a
-command is safe to re-run.
-"""
-
 from __future__ import annotations
 
 import argparse

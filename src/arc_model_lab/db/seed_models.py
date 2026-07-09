@@ -1,9 +1,3 @@
-"""Seed the model catalog from a JSON file (idempotent upsert).
-
-python -m arc_model_lab.db.seed_models seeds/models.local.json
-python -m arc_model_lab.db.seed_models --check seeds/models.local.json   # validate only
-"""
-
 from __future__ import annotations
 
 import argparse

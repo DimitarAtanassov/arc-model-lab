@@ -1,5 +1,3 @@
-"""Unit tests for the evaluation CLI helpers and dispatch logic."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -185,7 +183,7 @@ async def test_run_prints_outcome_without_exiting_for_completed_result(
 class _BatchService:
     """Fake evaluation service exposing the score/persist seam the batch uses.
 
-    Scoring status is COMPLETED except for ``_ID_B``, which fails; persistence
+    Scoring status is COMPLETED except for _ID_B, which fails; persistence
     passes the scored status straight through.
     """
 

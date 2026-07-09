@@ -1,5 +1,3 @@
-"""Unit tests for GenerationConfig validation (the experiment config boundary)."""
-
 from __future__ import annotations
 
 import pytest

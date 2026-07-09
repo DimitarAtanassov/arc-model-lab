@@ -1,5 +1,3 @@
-"""Composition root: lifespan wiring and the console entrypoint."""
-
 from __future__ import annotations
 
 import asyncio

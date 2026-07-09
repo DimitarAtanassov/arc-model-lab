@@ -1,9 +1,3 @@
-"""Repositories translate between ORM rows and pure domain entities.
-
-Repositories accept and return domain objects only; ORM types never leak past
-this boundary. Transaction control (commit/rollback) is owned by the caller.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -51,14 +45,14 @@ class ModelRepository:
         return _to_model(record) if record is not None else None
 
     async def require_by_name(self, name: str) -> Model:
-        """Return the model with this name, or raise ``ModelNotFoundError`` (404)."""
+        """Return the model with this name, or raise ModelNotFoundError (404)."""
         model = await self.get_by_name(name)
         if model is None:
             raise ModelNotFoundError(f"Model not found: {name}")
         return model
 
     async def require_by_id(self, model_id: UUID) -> Model:
-        """Return the model with this id, or raise ``ModelNotFoundError`` (404)."""
+        """Return the model with this id, or raise ModelNotFoundError (404)."""
         model = await self.get_by_id(model_id)
         if model is None:
             raise ModelNotFoundError(f"Model not found: {model_id}")
@@ -119,8 +113,8 @@ class InferenceRepository:
     ) -> list[Inference]:
         """Return inferences that have no evaluation results yet, oldest first.
 
-        Used by replay/backfill. The optional half-open ``[created_after,
-        created_before)`` window scopes a backfill to a time range.
+        Used by replay/backfill. The optional half-open [created_after,
+        created_before) window scopes a backfill to a time range.
         """
         unevaluated = ~exists().where(EvaluationResultRecord.inference_id == InferenceRecord.id)
         stmt = select(InferenceRecord).where(unevaluated)
@@ -135,8 +129,8 @@ class InferenceRepository:
     async def list_recent(self, limit: int) -> list[Inference]:
         """Return the most recent inferences, newest first (bounded page size).
 
-        Backs the history table. Ordering is by ``created_at`` descending; the
-        caller bounds ``limit`` so the collection is never unbounded.
+        Backs the history table. Ordering is by created_at descending; the
+        caller bounds limit so the collection is never unbounded.
         """
         records = (
             await self._session.scalars(
@@ -153,9 +147,9 @@ class EvaluationResultRepository:
     async def upsert_many(self, results: list[EvaluationResult]) -> list[EvaluationResult]:
         """Insert results, refreshing score/reasoning on the unique key.
 
-        The unique key ``(inference_id, metric_name, evaluator_name)`` makes this
+        The unique key (inference_id, metric_name, evaluator_name) makes this
         idempotent: replaying an already-scored inference updates the score in
-        place instead of raising or duplicating. ``created_at`` is preserved as
+        place instead of raising or duplicating. created_at is preserved as
         the first-evaluated time.
         """
         if not results:
@@ -233,7 +227,7 @@ class ExperimentRepository:
         """Average score and count per metric across the experiment's evaluations.
 
         Aggregation joins evaluation results to the experiment through the
-        ``experiment_runs`` association (not a column on inference), so comparison
+        experiment_runs association (not a column on inference), so comparison
         stays indexable and needs no application-side joins.
         """
         stmt = (
@@ -265,7 +259,7 @@ class ExperimentRunRepository:
     """Persists the association between an inference and its experiment.
 
     Write-only: the read path for experiment runs is the aggregate join in
-    :meth:`ExperimentRepository.aggregate_scores`, so a per-row lookup is not
+    ExperimentRepository.aggregate_scores, so a per-row lookup is not
     needed here.
     """
 
