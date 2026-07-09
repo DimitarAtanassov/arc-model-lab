@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from arc_model_lab.api.dependencies import get_inference_service, get_session
 from arc_model_lab.api.schemas import InferenceRequest, InferenceResponse
-from arc_model_lab.api.schemas.inference import InferenceDetailResponse, InferenceListItem
+from arc_model_lab.api.schemas.inference import InferenceListItem, InferenceRunRequest
 from arc_model_lab.services.inference_service import InferenceService
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -35,6 +35,28 @@ async def infer(
     return InferenceResponse.from_inference(inference)
 
 
+@router.post("/v1/inference:run", response_model=InferenceResponse, status_code=status.HTTP_201_CREATED)
+async def run_inference(
+    payload: InferenceRunRequest,
+    session: SessionDep,
+    service: ServiceDep,
+) -> InferenceResponse:
+    """Service-to-service inference: run a named model with an explicit config.
+
+    Used by arc-eval-service to run an experiment's model, which may be inactive.
+    Returns 404 for an unknown model and 409 for an inactive model when
+    allow_inactive is false.
+    """
+    inference = await service.run_named(
+        session,
+        model_name=payload.model_name,
+        input_text=payload.input_text,
+        config=payload.generation_config.to_domain(),
+        allow_inactive=payload.allow_inactive,
+    )
+    return InferenceResponse.from_inference(inference)
+
+
 @router.get("/inference", response_model=list[InferenceListItem])
 async def list_inferences(
     session: SessionDep,
@@ -45,8 +67,7 @@ async def list_inferences(
     return [InferenceListItem.from_inference(inference) for inference in await service.list_recent(session, limit)]
 
 
-@router.get("/inference/{inference_id}", response_model=InferenceDetailResponse)
-async def get_inference(inference_id: UUID, session: SessionDep, service: ServiceDep) -> InferenceDetailResponse:
-    """Return one inference with its evaluation scores, or 404 when absent."""
-    view = await service.get_detail(session, inference_id)
-    return InferenceDetailResponse.from_inference_and_evaluations(view.inference, view.evaluations)
+@router.get("/inference/{inference_id}", response_model=InferenceResponse)
+async def get_inference(inference_id: UUID, session: SessionDep, service: ServiceDep) -> InferenceResponse:
+    """Return one inference by id, or 404 when absent."""
+    return InferenceResponse.from_inference(await service.get_detail(session, inference_id))

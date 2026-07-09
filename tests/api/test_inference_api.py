@@ -4,12 +4,8 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from arc_model_lab.db.repositories import (
-    EvaluationResultRepository,
-    InferenceRepository,
-    ModelRepository,
-)
-from arc_model_lab.domain import EvaluationResult, Inference, Model, ModelStatus, Provider
+from arc_model_lab.db.repositories import InferenceRepository, ModelRepository
+from arc_model_lab.domain import Inference, Model, ModelStatus, Provider
 
 pytestmark = pytest.mark.integration
 
@@ -21,6 +17,20 @@ def _body(**overrides: object) -> dict[str, object]:
     body: dict[str, object] = {"model_name": _MODEL, "input_text": "summarize me"}
     body.update(overrides)
     return body
+
+
+async def _inactive_model(session_factory: async_sessionmaker[AsyncSession], name: str) -> None:
+    async with session_factory() as session:
+        await ModelRepository(session).upsert(
+            Model(
+                name=name,
+                provider=Provider.HUGGINGFACE,
+                model_id="x/y",
+                tokenizer_id="x/y",
+                status=ModelStatus.INACTIVE,
+            )
+        )
+        await session.commit()
 
 
 async def test_valid_request_returns_201(client: AsyncClient) -> None:
@@ -56,19 +66,18 @@ async def test_temperature_out_of_range_returns_422(client: AsyncClient) -> None
 
 
 async def test_explicit_temperature_is_accepted(client: AsyncClient) -> None:
-    # Temperature is an optional caller override; a valid value is honored.
     response = await client.post("/inference", json=_body(temperature=0.7))
     assert response.status_code == 201
 
 
 async def test_metrics_field_is_rejected(client: AsyncClient) -> None:
-    # Evaluation moved out of /inference; a stale metrics field is forbidden.
+    # Evaluation moved out of the lab; a stale metrics field is forbidden.
     response = await client.post("/inference", json=_body(metrics=["faithfulness"]))
     assert response.status_code == 422
 
 
 async def test_max_output_tokens_field_is_rejected(client: AsyncClient) -> None:
-    # Output length is a server default now, not a caller knob on /inference.
+    # Output length is a server default on /inference, not a caller knob.
     response = await client.post("/inference", json=_body(max_output_tokens=128))
     assert response.status_code == 422
 
@@ -92,20 +101,56 @@ async def test_inactive_model_returns_409(
     client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
     # Deactivating a model takes it out of /inference serving (409), the safety lever.
-    async with session_factory() as session:
-        await ModelRepository(session).upsert(
-            Model(
-                name="disabled",
-                provider=Provider.HUGGINGFACE,
-                model_id="x/y",
-                tokenizer_id="x/y",
-                status=ModelStatus.INACTIVE,
-            )
-        )
-        await session.commit()
-
+    await _inactive_model(session_factory, "disabled")
     response = await client.post("/inference", json=_body(model_name="disabled"))
     assert response.status_code == 409
+
+
+async def test_run_returns_201_and_the_inference(client: AsyncClient) -> None:
+    response = await client.post("/v1/inference:run", json={"model_name": _MODEL, "input_text": "summarize me"})
+    assert response.status_code == 201
+    body = response.json()
+    assert body["output_text"] == "fake summary"
+    assert "evaluation" not in body
+
+
+async def test_run_accepts_a_generation_config(client: AsyncClient) -> None:
+    response = await client.post(
+        "/v1/inference:run",
+        json={
+            "model_name": _MODEL,
+            "input_text": "hi",
+            "generation_config": {"temperature": 0.5, "max_output_tokens": 128},
+        },
+    )
+    assert response.status_code == 201
+
+
+async def test_run_allows_an_inactive_model(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    await _inactive_model(session_factory, "candidate")
+    response = await client.post(
+        "/v1/inference:run",
+        json={"model_name": "candidate", "input_text": "hi", "allow_inactive": True},
+    )
+    assert response.status_code == 201
+
+
+async def test_run_rejects_an_inactive_model_when_not_allowed(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    await _inactive_model(session_factory, "candidate2")
+    response = await client.post(
+        "/v1/inference:run",
+        json={"model_name": "candidate2", "input_text": "hi", "allow_inactive": False},
+    )
+    assert response.status_code == 409
+
+
+async def test_run_unknown_model_returns_404(client: AsyncClient) -> None:
+    response = await client.post("/v1/inference:run", json={"model_name": "ghost", "input_text": "hi"})
+    assert response.status_code == 404
 
 
 async def _persist_inference(
@@ -153,37 +198,16 @@ async def test_list_inference_preview_truncates_long_text(
     assert len(preview) <= 160
 
 
-async def test_get_inference_detail_includes_evaluation_scores(
+async def test_get_inference_returns_the_inference(
     client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
     inference = await _persist_inference(session_factory)
-    async with session_factory() as session:
-        await EvaluationResultRepository(session).upsert_many(
-            [
-                EvaluationResult(
-                    inference_id=inference.id,
-                    metric_name="faithfulness",
-                    score=0.75,
-                    evaluator_name="summary-faithfulness",
-                    evaluator_version="v1",
-                )
-            ]
-        )
-        await session.commit()
 
     body = (await client.get(f"/inference/{inference.id}")).json()
 
+    assert body["id"] == str(inference.id)
     assert body["output_text"] == "fake summary"
-    assert body["evaluations"] == [
-        {
-            "metric_name": "faithfulness",
-            "score": 0.75,
-            "reasoning": None,
-            "evaluator_name": "summary-faithfulness",
-            "evaluator_version": "v1",
-            "created_at": body["evaluations"][0]["created_at"],
-        }
-    ]
+    assert "evaluations" not in body
 
 
 async def test_get_unknown_inference_returns_404(client: AsyncClient) -> None:

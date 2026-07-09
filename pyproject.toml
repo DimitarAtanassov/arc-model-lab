@@ -91,8 +91,6 @@ addopts = "--strict-markers --strict-config"
 asyncio_mode = "auto"
 markers = [
     "integration: exercises a real database via testcontainers",
-    "contract: verifies the arc-eval request/response contract against a mocked transport",
-    "eval_smoke: end-to-end evaluation against a live arc-eval (skipped unless ARC_EVAL_SERVICE_URL is set)",
 ]
 
 [tool.coverage.run]

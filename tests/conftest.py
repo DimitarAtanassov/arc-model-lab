@@ -5,8 +5,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import AsyncExitStack
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -15,22 +14,20 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from arc_model_lab.api.dependencies import get_evaluation_service, get_inference_service
-from arc_model_lab.clients.arc_eval_client import ArcEvalClient
+from arc_model_lab.api.dependencies import get_inference_service
 from arc_model_lab.config import Settings
 from arc_model_lab.db import models as _models  # noqa: F401 - register ORM tables on Base.metadata
 from arc_model_lab.db.base import Base, create_async_engine_from_url, create_async_session_factory
 from arc_model_lab.db.repositories import ModelRepository
 from arc_model_lab.domain import GenerationConfig, GenerationError, Model, ModelLoadError, Provider
 from arc_model_lab.main import create_app
-from arc_model_lab.services.evaluation_service import EvaluationService
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_catalog_service import ModelCatalogService
 from arc_model_lab.services.model_service import ChatMessage, GenerationResult, ModelService
 
 _TEST_MODEL_NAME = "test-model"
 # Truncated together under CASCADE, so foreign-key order does not matter.
-_TABLES = ("evaluation_results", "experiment_runs", "inference", "experiments", "models")
+_TABLES = ("inference", "models")
 
 
 class FakeModelService(ModelService):
@@ -217,8 +214,6 @@ async def db_session(session_factory: async_sessionmaker[AsyncSession]) -> Async
 async def build_app(
     model_service: ModelService,
     session_factory: async_sessionmaker[AsyncSession],
-    *,
-    eval_client: ArcEvalClient | None = None,
 ) -> FastAPI:
     """Build an app wired to a test session factory and a fake model runtime.
 
@@ -232,7 +227,6 @@ async def build_app(
         await ModelRepository(session).upsert(_test_model())
         await session.commit()
     app.dependency_overrides[get_inference_service] = lambda: InferenceService(model_service)
-    app.dependency_overrides[get_evaluation_service] = lambda: EvaluationService(eval_client)
     # The catalog read service has no I/O seam to fake, so wire the real one into
     # app state the way lifespan does; the read endpoints resolve it from there.
     app.state.model_catalog_service = ModelCatalogService()
@@ -256,22 +250,6 @@ async def client(
     app = await build_app(fake_model_service, session_factory)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as async_client:
         yield async_client
-
-
-@pytest.fixture
-async def make_client(
-    fake_model_service: FakeModelService, session_factory: async_sessionmaker[AsyncSession]
-) -> AsyncIterator[Callable[[ArcEvalClient | None], Awaitable[AsyncClient]]]:
-    """Return a factory that builds an AsyncClient wired to a given eval client."""
-    async with AsyncExitStack() as stack:
-
-        async def _make(eval_client: ArcEvalClient | None = None) -> AsyncClient:
-            app = await build_app(fake_model_service, session_factory, eval_client=eval_client)
-            return await stack.enter_async_context(
-                AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-            )
-
-        yield _make
 
 
 @pytest.fixture

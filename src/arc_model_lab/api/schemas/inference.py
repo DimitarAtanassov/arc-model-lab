@@ -5,8 +5,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arc_model_lab.domain import EvaluationResult, Inference
-from arc_model_lab.domain.generation import MAX_TEMPERATURE
+from arc_model_lab.domain import Inference
+from arc_model_lab.domain.generation import (
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    DEFAULT_TEMPERATURE,
+    MAX_TEMPERATURE,
+    GenerationConfig,
+)
 
 _PREVIEW_CHARS = 160
 
@@ -39,6 +44,30 @@ class InferenceRequest(BaseModel):
     )
 
 
+class GenerationConfigSchema(BaseModel):
+    """The decoding config a service-to-service caller sends explicitly."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=MAX_TEMPERATURE)
+    max_output_tokens: int = Field(default=DEFAULT_MAX_OUTPUT_TOKENS, ge=1)
+
+    def to_domain(self) -> GenerationConfig:
+        return GenerationConfig(temperature=self.temperature, max_output_tokens=self.max_output_tokens)
+
+
+class InferenceRunRequest(BaseModel):
+    # Service-to-service body for POST /v1/inference:run. Unlike /inference it
+    # carries a full generation config (temperature and max_output_tokens) and may
+    # run an inactive candidate model.
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    model_name: str = Field(min_length=1, description="Catalog model to run.")
+    input_text: str = Field(min_length=1, description="Text to summarize.")
+    generation_config: GenerationConfigSchema = Field(default_factory=GenerationConfigSchema)
+    allow_inactive: bool = Field(default=True, description="Run the model even if it is not active.")
+
+
 class InferenceResponse(BaseModel):
     model_config = ConfigDict(protected_namespaces=(), from_attributes=True)
 
@@ -54,11 +83,6 @@ class InferenceResponse(BaseModel):
 
     @classmethod
     def from_inference(cls, inference: Inference) -> InferenceResponse:
-        """Shape the pure-inference response.
-
-        No experiment id and no evaluation: /inference neither runs under an
-        experiment nor scores its output. Those belong to the experiment flow.
-        """
         return cls.model_validate(inference)
 
 
@@ -87,49 +111,4 @@ class InferenceListItem(BaseModel):
             prompt_tokens=inference.prompt_tokens,
             completion_tokens=inference.completion_tokens,
             created_at=inference.created_at,
-        )
-
-
-class InferenceEvaluationOut(BaseModel):
-    """One persisted metric score attached to an inference detail."""
-
-    metric_name: str
-    score: float
-    reasoning: str | None
-    evaluator_name: str
-    evaluator_version: str | None
-    created_at: datetime
-
-    @classmethod
-    def from_domain(cls, result: EvaluationResult) -> InferenceEvaluationOut:
-        return cls(
-            metric_name=result.metric_name,
-            score=result.score,
-            reasoning=result.reasoning,
-            evaluator_name=result.evaluator_name,
-            evaluator_version=result.evaluator_version,
-            created_at=result.created_at,
-        )
-
-
-class InferenceDetailResponse(InferenceResponse):
-    """A full inference plus every evaluation score recorded against it."""
-
-    evaluations: list[InferenceEvaluationOut] = []
-
-    @classmethod
-    def from_inference_and_evaluations(
-        cls, inference: Inference, evaluations: list[EvaluationResult]
-    ) -> InferenceDetailResponse:
-        return cls(
-            id=inference.id,
-            model_id=inference.model_id,
-            input_text=inference.input_text,
-            prompt=inference.prompt,
-            output_text=inference.output_text,
-            latency_ms=inference.latency_ms,
-            prompt_tokens=inference.prompt_tokens,
-            completion_tokens=inference.completion_tokens,
-            created_at=inference.created_at,
-            evaluations=[InferenceEvaluationOut.from_domain(result) for result in evaluations],
         )

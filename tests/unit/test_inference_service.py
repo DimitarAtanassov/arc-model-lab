@@ -111,24 +111,44 @@ async def test_summarize_persists_inference(fake_model_service: ModelService, mo
     assert added[0] is inference
 
 
-async def test_run_for_experiment_uses_the_given_model(
+async def test_run_named_allows_an_inactive_model(
     fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    inactive = Model(
+        name="m", provider=Provider.HUGGINGFACE, model_id="x/y", tokenizer_id="x/y", status=ModelStatus.INACTIVE
+    )
+    _patch_model_repo(monkeypatch, inactive)
     added = _patch_inference_repo(monkeypatch)
-    model = _model()
 
-    inference = await InferenceService(fake_model_service).run_for_experiment(
+    inference = await InferenceService(fake_model_service).run_named(
         MagicMock(spec=AsyncSession),
-        model=model,
+        model_name="m",
         input_text="hello",
         config=_config(),
+        allow_inactive=True,
     )
 
-    assert inference.model_id == model.id
-    # The experiment path resolves nothing by name; the model is passed in and the
-    # inference carries no experiment reference.
+    assert inference.model_id == inactive.id
     assert added
     assert added[0] is inference
+
+
+async def test_run_named_rejects_an_inactive_model_when_not_allowed(
+    fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inactive = Model(
+        name="m", provider=Provider.HUGGINGFACE, model_id="x/y", tokenizer_id="x/y", status=ModelStatus.INACTIVE
+    )
+    _patch_model_repo(monkeypatch, inactive)
+
+    with pytest.raises(ModelInactiveError):
+        await InferenceService(fake_model_service).run_named(
+            MagicMock(spec=AsyncSession),
+            model_name="m",
+            input_text="hello",
+            config=_config(),
+            allow_inactive=False,
+        )
 
 
 async def test_summarize_uses_server_default_config_when_temperature_omitted(
