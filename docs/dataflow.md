@@ -1,61 +1,36 @@
 # arc-model-lab Data Flow
 
-Audience: backend engineers extending or operating the service. Reading time: 8 minutes.
+Audience: backend engineers extending or operating the service. Reading time: 4 minutes.
 
-The service turns text into a durable inference record, then optionally into
-quality scores. The pipeline is `Model -> Inference -> EvaluationResult`, and an
-experiment run wraps that pipeline and links each inference back to the experiment
-that produced it. Inference and evaluation are separate service boundaries:
-inference runs locally against a HuggingFace model, evaluation is an HTTP call to
-the `arc-eval` service. The entity schema is in
-[database-erd.md](database-erd.md); the module layout is in
-[architecture.md](architecture.md).
+The service turns text into one durable inference record. The pipeline is
+`Model -> Inference`: resolve the named model, generate, persist. There is no
+scoring path in the lab; quality scores and experiments live in the separate
+arc-eval-service. The entity schema is in [database-erd.md](database-erd.md); the
+module layout is in [architecture.md](architecture.md).
 
 ## End-to-end data flow
 
-Evaluation is opt-in per request: a caller that names one or more `metrics` gets
-its output scored against them; omitting `metrics` skips evaluation. When metrics
-are requested it makes a scoring call if an `arc-eval` URL is configured, and is
-skipped without error otherwise. The inference path is fail-closed (a failure
-returns an error and stores nothing); the evaluation path is fail-open (a
-transport or schema failure still returns the stored summary), except an unknown
-metric, which is a caller error surfaced as 404.
+Two endpoints write an inference row through the same path. `POST /inference` is
+online serving (active models only, server-default decoding with an optional
+`temperature` override). `POST /v1/inference:run` is the service-to-service seam
+arc-eval-service calls to run a candidate model with an explicit generation config,
+optionally allowing an inactive model. Both are fail-closed: a failure returns an
+error and stores nothing.
 
 ```mermaid
 flowchart LR
-    Client[Client] --> API["FastAPI (/inference, /experiments/*/run)"]
-
-    subgraph inf ["Inference path (fail-closed)"]
-        API --> InfSvc[InferenceService]
-        InfSvc --> ModelRepo[ModelRepository]
-        InfSvc --> MS[ModelService]
-        MS --> HF[HuggingFace runtime]
-        InfSvc --> InfRepo[InferenceRepository]
-    end
-
-    subgraph ev ["Evaluation path (fail-open)"]
-        API -. "metrics requested" .-> EvalSvc[EvaluationService]
-        EvalSvc --> AEC[ArcEvalClient]
-        AEC -->|"POST /v1/evaluate"| Arc[arc-eval service]
-        Arc -->|metric scores| AEC
-        EvalSvc --> EvalRepo[EvaluationResultRepository]
-    end
-
+    Client[Client / arc-eval-service] --> API["FastAPI (/inference, /v1/inference:run)"]
+    API --> InfSvc[InferenceService]
+    InfSvc --> ModelRepo[ModelRepository]
+    InfSvc --> MS[ModelService]
+    MS --> HF[HuggingFace runtime]
+    InfSvc --> InfRepo[InferenceRepository]
     ModelRepo --> DB[(Postgres)]
     InfRepo --> DB
-    EvalRepo --> DB
     API --> Client
 ```
 
-## Experiment run: inference, evaluation, then the link
-
-An experiment run does three steps, each in its own transaction: it commits the
-inference, then (when the run names `metrics`) calls evaluation, then records the
-experiment-to-inference link in `experiment_runs` last. When the run names
-`metrics`, `arc-eval` scores exactly those (an unknown metric is a 404), persists
-its own copy, and returns only the metrics that scored. `/inference` on its own is
-just the inference step: it neither scores its output nor links the row to an
-experiment.
+## Request path
 
 ```mermaid
 sequenceDiagram
@@ -64,153 +39,53 @@ sequenceDiagram
     participant Inf as InferenceService
     participant MS as ModelService
     participant IRepo as InferenceRepository
-    participant Eval as EvaluationService
-    participant AEC as ArcEvalClient
-    participant Arc as arc-eval
-    participant ERepo as EvaluationResultRepository
-    participant RRepo as ExperimentRunRepository
     participant DB as Postgres
 
-    Client->>API: POST /experiments/{id}/run
-    API->>Inf: run_for_experiment(model, input_text, config)
-    Note over API,Inf: model and decoding come from the experiment
+    Client->>API: POST /inference or /v1/inference:run
+    API->>Inf: summarize / run_named
+    Inf->>Inf: resolve model by name (active gate per endpoint)
     Inf->>MS: generate(model, messages, config)
     MS-->>Inf: GenerationResult
     Inf->>IRepo: add(inference)
     IRepo->>DB: INSERT inference
     Inf->>DB: COMMIT
     Inf-->>API: persisted Inference
-
-    API->>Eval: evaluate_inference(session, inference, metrics)
-    Eval->>AEC: evaluate(EvalRequest)
-    AEC->>Arc: POST /v1/evaluate
-    Arc-->>AEC: 200 results
-    AEC-->>Eval: EvalResponse
-    Eval->>ERepo: upsert_many(results)
-    ERepo->>DB: INSERT ... ON CONFLICT DO UPDATE
-    Eval->>DB: COMMIT
-    Eval-->>API: EvaluationOutcome(completed)
-
-    API->>RRepo: add(experiment_id, inference_id)
-    RRepo->>DB: INSERT experiment_runs
-    API->>DB: COMMIT
-    API-->>Client: 201 with experiment_id and evaluation
+    API-->>Client: 201 Created
 ```
 
-## Evaluation outcome states
+Generation is CPU or GPU bound and blocking; `InferenceService` runs it in a worker
+thread (`asyncio.to_thread`) so the async event loop is never blocked.
 
-`EvaluationService.evaluate_inference` returns one of three states. Only
-`completed` writes rows.
+## Transaction boundary
 
-```mermaid
-flowchart TD
-    Start([evaluate_inference]) --> HasClient{arc-eval configured?}
-    HasClient -->|no| Skipped["status = skipped (no write)"]
-    HasClient -->|yes| Call[ArcEvalClient.evaluate]
-    Call --> OK{2xx and valid schema?}
-    OK -->|no| Failed["status = failed (log, no write)"]
-    OK -->|yes| Persist[upsert_many and commit]
-    Persist --> Completed["status = completed (results returned)"]
-```
+One request, one transaction, one committed row. The service inserts the
+`inference` row and commits before returning; the request-scoped session rolls back
+on any exception. A failed generation or write returns an error and stores nothing,
+so a successful response always corresponds to a persisted row. The `inference`
+table is append-only in normal operation.
 
-| Status | Trigger | Persistence | Response |
-| --- | --- | --- | --- |
-| `skipped` | `ARC_EVAL_SERVICE_URL` empty | none | `evaluation.status = skipped` |
-| `failed` | transport error, non-2xx, or unparseable body | none | summary returned, `status = failed` |
-| `completed` | scores returned (list may be empty) | upsert | scores in `evaluation.results` |
+## Model resolution
 
-A failed call raises `EvaluationError` inside `ArcEvalClient`; the service
-catches it, logs a warning, and returns `failed`. The already-committed inference
-is untouched.
+The two endpoints differ only in how they resolve the model:
 
-## Transaction boundaries
+| Endpoint | Model gate | Decoding |
+| --- | --- | --- |
+| `POST /inference` | Active only; a non-active model is `409` | Server default; caller may override `temperature` |
+| `POST /v1/inference:run` | Active, unless the caller sets `allow_inactive` | Explicit `GenerationConfig` (`temperature`, `max_output_tokens`) |
 
-Inference and evaluation never share a transaction.
-
-- `InferenceService` inserts and commits the `inference` row (via `summarize`
-  for `/inference`, or `run_for_experiment` for an experiment run), then returns.
-  A failure here returns an error status and stores nothing.
-- `EvaluationService.evaluate_inference` runs after that commit. It writes
-  `evaluation_results` in its own transaction. A failure leaves the inference row
-  in place and returns `failed`.
-
-This ordering is why evaluation cannot corrupt inference storage: the durable
-record exists before the eval call is attempted.
-
-## Backfill and replay
-
-Inferences created before evaluation existed, or whose evaluation failed, are
-scored from the CLI in `src/arc_model_lab/cli/evaluations.py`. `list_unevaluated`
-selects `inference` rows with no matching `evaluation_results` (`NOT EXISTS`),
-optionally bounded by a `created_at` window for `backfill`.
-
-Batch runs are fail-closed per item: a failed item is counted and the loop
-continues; the command exits non-zero if any item failed. Because writes upsert
-on the unique metric key, a command is safe to re-run.
-
-```mermaid
-flowchart TD
-    CLI["make eval.replay / eval.backfill"] --> List[InferenceRepository.list_unevaluated]
-    List -->|rows without results| Loop{for each inference}
-    Loop --> Eval[EvaluationService.evaluate_inference]
-    Eval --> Outcome{outcome}
-    Outcome -->|completed| Inc[completed plus 1]
-    Outcome -->|failed or skipped| IncF[failed plus 1]
-    Inc --> Loop
-    IncF --> Loop
-    Loop -->|done| Report["print counts, exit 1 if any failed"]
-```
-
-`make eval.run ID=<uuid>` scores a single inference by id through the same
-`evaluate_inference` path.
+An unknown model name is `404` on both. `allow_inactive` lets arc-eval-service run
+a candidate model before it is activated.
 
 ## Data lineage
 
-Each inference belongs to one model and has zero or more evaluation results, one
-row per metric. An experiment run adds one `experiment_runs` row linking the
-inference to its experiment (an inference has at most one such link). The unique
-key `(inference_id, metric_name, evaluator_name)` is what makes replay idempotent.
+Each inference belongs to one model. That is the whole lineage the lab keeps:
 
 ```mermaid
 erDiagram
     models ||--o{ inference : produces
-    models ||--o{ experiments : "configured for"
-    experiments ||--o{ experiment_runs : "recorded as"
-    inference ||--o| experiment_runs : "linked by"
-    inference ||--o{ evaluation_results : "scored by"
-
-    experiment_runs {
-        uuid id PK
-        uuid experiment_id FK
-        uuid inference_id FK,UK
-        timestamptz created_at
-    }
-
-    evaluation_results {
-        uuid id PK
-        uuid inference_id FK
-        text metric_name
-        double score
-        text reasoning "nullable"
-        text evaluator_name
-        text evaluator_version "nullable"
-        timestamptz created_at
-    }
 ```
 
-The `models` and `inference` columns are in [database-erd.md](database-erd.md).
-The `evaluation_results` table is created by
-`migrations/versions/0003_evaluation_results.py`.
-
-## Configuration touchpoints
-
-Evaluation reads its own settings (`EvalSettings`, prefix `ARC_EVAL_`), separate
-from the app settings.
-
-| Variable | Effect |
-| --- | --- |
-| `ARC_EVAL_SERVICE_URL` | Base URL of `arc-eval`. Empty means a request that asks for metrics gets evaluation `skipped`. |
-| `ARC_EVAL_TIMEOUT_SECONDS` | Per-request timeout for the `arc-eval` call. |
-
-The client is built once at startup in `main.py` (`build_arc_eval_client`). When
-the URL is empty the service holds no client and short-circuits to `skipped`.
+Scores are not stored here. arc-eval-service receives an inference's id in the
+response and keeps it as correlation metadata when it scores the output; the
+authoritative scores live in that service's own database. The `models` and
+`inference` columns are in [database-erd.md](database-erd.md).

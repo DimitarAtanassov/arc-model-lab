@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass
-from typing import Any
+from dataclasses import dataclass
 
 from arc_model_lab.domain.exceptions import InvalidGenerationConfigError
 
@@ -11,8 +9,6 @@ DEFAULT_MAX_OUTPUT_TOKENS = 256
 # The largest temperature a caller may request. Above this, sampling degenerates
 # into noise for the instruct models this service runs.
 MAX_TEMPERATURE = 2.0
-
-_FIELDS = ("temperature", "max_output_tokens")
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,26 +29,6 @@ class GenerationConfig:
         # validators' coerced return values are used rather than discarded.
         object.__setattr__(self, "temperature", _temperature(self.temperature))
         object.__setattr__(self, "max_output_tokens", _positive_int("max_output_tokens", self.max_output_tokens))
-
-    def to_dict(self) -> dict[str, float | int]:
-        return asdict(self)
-
-    @classmethod
-    def from_mapping(cls, data: Mapping[str, object]) -> GenerationConfig:
-        """Build a config from a raw mapping (stored JSON or other untyped input).
-
-        Validates only the keys (unknown or missing); the constructor's
-        __post_init__ owns the value bounds, so no field is validated twice.
-        This is the entry point for configs that did not pass the typed HTTP schema.
-        """
-        unknown = sorted(set(data) - set(_FIELDS))
-        if unknown:
-            raise InvalidGenerationConfigError(f"Unknown generation parameters: {unknown}")
-        missing = sorted(set(_FIELDS) - set(data))
-        if missing:
-            raise InvalidGenerationConfigError(f"Missing generation parameters: {missing}")
-        values: dict[str, Any] = {name: data[name] for name in _FIELDS}
-        return cls(**values)
 
 
 def _positive_int(name: str, value: object) -> int:

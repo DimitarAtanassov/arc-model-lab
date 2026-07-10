@@ -34,39 +34,17 @@ class InferenceNotFoundError(DomainError):
     """The requested inference does not exist."""
 
 
-class EvaluationError(DomainError):
-    """Calling the evaluation service failed or returned an unusable response."""
-
-
-class UnknownMetricError(DomainError):
-    """A requested evaluation metric is not defined by the evaluation service.
-
-    Distinct from EvaluationError: an unknown metric is a caller mistake
-    (surfaced as 404), not an infrastructure failure that evaluation fails open on.
-    """
-
-
-class ExperimentNotFoundError(DomainError):
-    """The requested experiment does not exist."""
-
-
-class ExperimentNameConflictError(DomainError):
-    """An experiment with the requested name already exists."""
-
-
 class InvalidGenerationConfigError(DomainError):
-    """A generation config names an unknown knob or an invalid value.
-
-    A client-boundary validation error (422). Its read-path counterpart is
-    CorruptStoredDataError: the same failure on data loaded from storage
-    is a server fault (500), not a client mistake.
-    """
+    """A generation config names an unknown knob or an invalid value (422)."""
 
 
-class CorruptStoredDataError(DomainError):
-    """Persisted data failed validation when read back into the domain.
+class PromptTemplateNotFoundError(DomainError):
+    """The requested prompt template is not defined (404)."""
 
-    A server-side data-integrity fault: the repository raises it when stored JSON
-    (for example an experiment's generation config) cannot be rebuilt, so it
-    surfaces as 500, unlike the 422 a client boundary returns for invalid input.
+
+class PromptRenderError(DomainError):
+    """A prompt template could not be rendered from the given variables (422).
+
+    Raised when the caller's variables do not exactly match the template's
+    placeholders: a missing variable, an unknown one, or the reserved input_text.
     """

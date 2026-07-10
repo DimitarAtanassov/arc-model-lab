@@ -82,7 +82,7 @@ max-args = 6
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["transformers.*", "torch.*"]
+module = ["transformers.*", "torch.*", "yaml"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -91,8 +91,7 @@ addopts = "--strict-markers --strict-config"
 asyncio_mode = "auto"
 markers = [
     "integration: exercises a real database via testcontainers",
-    "contract: verifies the arc-eval request/response contract against a mocked transport",
-    "eval_smoke: end-to-end evaluation against a live arc-eval (skipped unless ARC_EVAL_SERVICE_URL is set)",
+    "contract: verifies the /v1/inference:run wire contract with arc-eval-service",
 ]
 
 [tool.coverage.run]

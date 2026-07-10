@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from arc_model_lab.services.evaluation_service import EvaluationService
-from arc_model_lab.services.experiment_service import ExperimentService
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_catalog_service import ModelCatalogService
 
@@ -31,16 +28,3 @@ def get_inference_service(request: Request) -> InferenceService:
 def get_model_catalog_service(request: Request) -> ModelCatalogService:
     service: ModelCatalogService = request.app.state.model_catalog_service
     return service
-
-
-def get_evaluation_service(request: Request) -> EvaluationService:
-    service: EvaluationService = request.app.state.evaluation_service
-    return service
-
-
-def get_experiment_service(
-    inference_service: Annotated[InferenceService, Depends(get_inference_service)],
-    evaluation_service: Annotated[EvaluationService, Depends(get_evaluation_service)],
-) -> ExperimentService:
-    """Compose the experiment use case from the shared inference and eval services."""
-    return ExperimentService(inference_service, evaluation_service)
