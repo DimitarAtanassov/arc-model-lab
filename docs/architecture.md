@@ -8,13 +8,20 @@ Audience: backend engineers extending or operating the service. Reading time: 8 
 The caller names the model and an optional decoding config; the service resolves
 the model from its catalog, generates, persists one inference row, and returns it.
 It never scores its output: scoring and experimentation live in the separate
-arc-eval-service, which calls back into this service to run a candidate model.
+arc-eval-service. The two services do not call each other; arc-platform
+orchestrates them, running an inference here and then scoring that inference's
+input and output in arc-eval-service.
 
-Two write endpoints produce inference rows:
+One write endpoint produces inference rows:
 
-- `POST /inference`, online serving. Serves only active models.
-- `POST /v1/inference:run`, the service-to-service seam arc-eval-service calls to
-  run a candidate model (which may be inactive) with an explicit generation config.
+- `POST /inference`, online serving. Serves only active models, sends `input_text`
+  to the model unframed, and defaults decoding to the server config (the caller
+  may override `temperature`).
+
+Everything else is read-only: `GET /inference` and `GET /inference/{id}` browse the
+stored inferences, `GET /models` and `GET /models/{name}` browse the catalog, and
+`GET /health` is the liveness probe. There is no service-to-service inference
+endpoint; anything that needs a generation calls `POST /inference`.
 
 ## Design principles
 
@@ -45,7 +52,7 @@ imports only the standard library.
 
 ```mermaid
 flowchart LR
-    Client[Client / arc-eval-service] --> API["FastAPI (/inference, /v1/inference:run)"]
+    Client[Client / arc-platform] --> API["FastAPI (/inference)"]
 
     API --> Inf[InferenceService]
     Inf --> Models[ModelRepository]
@@ -61,7 +68,7 @@ flowchart LR
 `ModelService` keeps an in-process cache of loaded model runtimes and is created
 once at startup. `InferenceService` holds no per-request state and resolves the
 model named in each request from the catalog. The service has no outbound
-dependency; arc-eval-service depends on it (over HTTP) to run an inference.
+dependency; arc-platform calls it (over HTTP) to run an inference.
 
 ## Domain model
 
@@ -96,16 +103,20 @@ class Inference:
     latency_ms: int
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    generation_config: GenerationConfig = field(default_factory=GenerationConfig)
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 ```
 
 `GenerationConfig` (`src/arc_model_lab/domain/generation.py`) is the decoding
 config (`temperature`, `max_output_tokens`); it validates its own bounds in
-`__post_init__`, so no construction path can build an out-of-range config.
-`Provider` currently has one member, `huggingface`. `ModelStatus` is `active`,
-`inactive`, or `deprecated`; `/inference` serves only `active` models. The tables
-behind these entities are in [database-erd.md](database-erd.md).
+`__post_init__`, so no construction path can build an out-of-range config. Each
+`Inference` records the resolved `GenerationConfig` it was produced with (after the
+server defaults are applied); it is persisted as JSONB on the row, so the record
+alone reproduces the call. `Provider` currently has one member, `huggingface`.
+`ModelStatus` is `active`, `inactive`, or `deprecated`; `/inference` serves only
+`active` models. The tables behind these entities are in
+[database-erd.md](database-erd.md).
 
 ## Service responsibilities
 
@@ -124,21 +135,22 @@ It does not touch HTTP, the database, or prompt policy.
 
 ### InferenceService
 
-Owns the summarization workflow: enforce the input size limit, resolve the model
-by name, build chat messages, call `ModelService`, assemble the `Inference`,
-persist it through the repository, and commit. It returns the persisted domain
-entity. A single private resolver gates model resolution:
-
-- `summarize` (for `/inference`) resolves with `allow_inactive=False`, so a
-  non-active model is a `409`. Decoding defaults to the server config; the caller
-  may override `temperature` only.
-- `run_named` (for `/v1/inference:run`) resolves with the caller's `allow_inactive`
-  and takes a full `GenerationConfig`, so arc-eval-service can run an inactive
-  candidate model before it is activated.
+Owns the inference workflow: resolve the model by name (a non-active model is a
+`409`), enforce the input size limit, send `input_text` as a single user turn,
+call `ModelService`, assemble the `Inference`, persist it through the repository,
+and commit. It returns the persisted domain entity. Decoding defaults to the
+server config; the caller may override `temperature` only.
 
 Generation is blocking, so the service offloads it to a worker thread
 (`asyncio.to_thread`) rather than blocking the event loop. It does not touch
 HuggingFace internals or ORM types.
+
+### ModelCatalogService
+
+Owns the read-only catalog surface behind `GET /models` and `GET /models/{name}`:
+it lists every model ordered by name and fetches one by its unique name (a missing
+name is a 404). It loads no weights and runs no inference; it only reads the catalog
+through `ModelRepository`.
 
 ### Repositories
 
@@ -160,8 +172,8 @@ sequenceDiagram
     participant Repo as InferenceRepository
     participant DB as Postgres
 
-    Client->>API: POST /inference (or /v1/inference:run)
-    API->>Svc: summarize / run_named
+    Client->>API: POST /inference
+    API->>Svc: infer
     Svc->>Cat: require_by_name(name)
     Cat->>DB: SELECT model
     DB-->>Cat: model row
@@ -177,9 +189,8 @@ sequenceDiagram
     API-->>Client: 201 Created
 ```
 
-The two endpoints share this sequence; they differ only in model resolution
-(`/inference` requires an active model and defaults decoding; `/v1/inference:run`
-takes an explicit config and may allow an inactive model).
+`/inference` requires an active model and defaults decoding to the server config,
+with an optional `temperature` override.
 
 ## Persistence guarantee
 
@@ -201,7 +212,7 @@ message.
 | Empty `input_text` | Pydantic validation | 422 |
 | Input over 50,000 characters | `InputTooLargeError` | 413 |
 | Unknown model referenced | `ModelNotFoundError` | 404 |
-| Model not active (`/inference`, or `/v1/inference:run` without `allow_inactive`) | `ModelInactiveError` | 409 |
+| Model not active | `ModelInactiveError` | 409 |
 | Unknown inference referenced (on read) | `InferenceNotFoundError` | 404 |
 | Invalid generation config (domain guard; the request schema returns 422 first) | `InvalidGenerationConfigError` | 422 |
 | Weights or tokenizer fail to load | `ModelLoadError` | 503 |
@@ -220,8 +231,8 @@ the file without writing.
 Each model carries a `status` (`active`, `inactive`, `deprecated`) set by its seed
 entry, which gates online serving: `/inference` serves only active models (a
 non-active model is a 409). Change a model's status by editing its seed entry and
-re-running the seed. `/v1/inference:run` can bypass the gate with `allow_inactive`,
-so arc-eval-service can score a candidate before it is activated.
+re-running the seed. There is no API path to run a non-active model: a candidate is
+activated in the catalog before it can serve.
 
 ## Configuration
 
@@ -263,7 +274,7 @@ API waits for it.
 | --- | --- | --- |
 | Unit | `tests/unit/` | Prompt construction, domain, the inference service with fakes, config, seeding, error boundary |
 | Integration | `tests/integration/` | Repositories and the online path against real Postgres |
-| API | `tests/api/` | `/inference`, `/v1/inference:run`, and the model endpoints: happy path and each error mapping |
+| API | `tests/api/` | `/inference`, the `/models` browse endpoints, and each error mapping; a regression test asserts the removed `/v1/inference:run` seam is gone |
 
 DB-backed tests are marked `@pytest.mark.integration`. They prefer a Postgres
 testcontainer and fall back to a local cluster (`initdb`) when the container
@@ -293,10 +304,11 @@ and deterministic. Coverage runs with branch coverage enabled and is enforced.
 - The container runs as a non-root user and excludes model artifacts from the image.
 - Input size is capped at 50,000 characters before tokenization; the tokenizer
   additionally truncates to `ARC_MAX_INPUT_TOKENS`.
-- `POST /v1/inference:run` can run an inactive model with arbitrary decoding, a
-  privileged operation. It has no authentication today; gating it to
-  arc-eval-service's workload identity is a tracked follow-up before it is exposed
-  beyond a trusted network.
+- No endpoint is authenticated today: the service assumes a trusted network with
+  arc-platform as the only caller. Every write is `POST /inference`, which serves
+  only active models, so there is no privileged "run an inactive model" surface to
+  gate. Adding authentication before the service is exposed more widely is a tracked
+  follow-up.
 
 ## Deferred capabilities
 
@@ -306,5 +318,7 @@ inference, an event bus, and OpenTelemetry tracing.
 
 Experiments and evaluation used to live here; they moved to arc-eval-service, which
 owns metrics, judges, scores, experiments, and comparison. The lab is now a focused
-model-serving service: it runs a named model and persists the inference, and
-arc-eval-service reads that output by id when it scores an experiment run.
+model-serving service: it runs a named model and persists the inference. It does not
+call arc-eval-service and arc-eval-service does not call it; arc-platform runs an
+inference here, collects the output, and hands that input and output to
+arc-eval-service as data to score.

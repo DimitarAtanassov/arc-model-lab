@@ -9,8 +9,9 @@ Alembic migrations in `migrations/` and mirrored by the SQLAlchemy ORM in
 
 Scoring and experimentation live in the separate arc-eval-service, which owns its
 own database. arc-model-lab is pure model serving: it runs a model and stores the
-inference; it never stores scores. The eval service reads an inference's output by
-id (over HTTP) when it scores an experiment run.
+inference; it never stores scores. The two services do not call each other:
+arc-platform runs an inference here, collects the output, and hands that input and
+output to arc-eval-service as data to score.
 
 ## Entity relationship diagram
 
@@ -40,6 +41,7 @@ erDiagram
         integer latency_ms
         integer prompt_tokens "nullable"
         integer completion_tokens "nullable"
+        jsonb generation_config "default {}"
         timestamptz created_at
     }
 ```
@@ -74,11 +76,10 @@ trigger. A write that bypasses the ORM will not refresh it.
 
 ## Table: inference
 
-One row per executed summarization, written by both `POST /inference` (online
-serving) and `POST /v1/inference:run` (the service-to-service path the eval service
-calls). This is the durable record; rows are append-only and are not deleted in
-normal operation. The eval service references a row by id when it scores the
-output.
+One row per executed inference, written by `POST /inference` (online serving).
+This is the durable record; rows are append-only and are not deleted in normal
+operation. arc-platform reads a row by id and hands its input and output to
+arc-eval-service for scoring; the lab itself never scores.
 
 | Column | Type | Nullable | Default | Notes |
 | --- | --- | --- | --- | --- |
@@ -90,6 +91,7 @@ output.
 | `latency_ms` | integer | no | | Generation wall-clock time in milliseconds |
 | `prompt_tokens` | integer | yes | null | Prompt token count when available |
 | `completion_tokens` | integer | yes | null | Completion token count when available |
+| `generation_config` | jsonb | no | `'{}'` | Resolved decoding config the row was produced with |
 | `created_at` | timestamptz | no | `now()` | Row creation time (DB default) |
 
 Constraints:
@@ -98,9 +100,18 @@ Constraints:
 - `fk_inference_model_id_models` foreign key (`model_id`) references `models(id)`
   `ON DELETE RESTRICT`.
 
+`generation_config` records the decoding settings (`temperature`,
+`max_output_tokens`, and any future knob) each inference was produced with, so the
+row alone reproduces the call. It is JSONB, not columns, because the knob set is
+open and evolving. A row written before this column existed carries `'{}'`, which
+rehydrates to the greedy default. The API response does not expose it; it is
+persistence-only provenance today.
+
 ## History
 
 Migrations `0003` through `0005` added `evaluation_results`, `experiments`, and
 `experiment_runs` when the lab owned scoring and experiments. Migration `0006`
 drops all three: that concern moved to arc-eval-service. The downgrade recreates
 them empty for reversibility, but the migrated rows are not restored by it.
+Migration `0007` adds `inference.generation_config` as a metadata-only column add
+(constant default, no table rewrite), so it takes only a brief lock.

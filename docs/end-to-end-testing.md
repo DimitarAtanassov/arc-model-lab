@@ -2,9 +2,9 @@
 
 Audience: engineers validating the lab locally. Reading time: 6 minutes.
 
-This is a copy-paste walkthrough. You will start `arc-model-lab`, run inference
-over both endpoints, read the rows back, and confirm they persisted. The lab is
-pure model serving: it stores inferences and never scores them. Scoring and
+This is a copy-paste walkthrough. You will start `arc-model-lab`, browse the model
+catalog, run an inference, read the rows back, and confirm they persisted. The lab
+is pure model serving: it stores inferences and never scores them. Scoring and
 experiments live in arc-eval-service, which has its own end-to-end guide.
 
 ## What you will run
@@ -108,11 +108,15 @@ block you can paste straight into the interactive docs: open
 paste the JSON into **Request body**, and press **Execute**. The `curl` command
 after each block sends the same body from the terminal.
 
-### 1. Health check
+### 1. Health check and catalog
 
 ```bash
 curl -s localhost:8000/health | jq            # -> {"status":"ok"}
+curl -s localhost:8000/models | jq            # the seeded catalog: name, status, ids
 ```
+
+`GET /models` lists the catalog and `GET /models/{name}` fetches one. `/inference`
+serves only models whose `status` is `active`.
 
 ### 2. Run a plain inference
 
@@ -153,40 +157,9 @@ curl -s localhost:8000/inference/$INFERENCE_ID | jq       # one inference by id
 curl -s "localhost:8000/inference?limit=5" | jq           # recent, newest first
 ```
 
-### 4. Run the service-to-service endpoint
+### 4. Confirm the active-model gate
 
-`POST /v1/inference:run` is what arc-eval-service calls. It takes an explicit
-generation config and can run an inactive candidate model.
-
-Request body:
-
-```json
-{
-  "model_name": "qwen2.5-1.5b-instruct",
-  "input_text": "The city council approved a plan to add 20 miles of protected bike lanes over three years, funded by a state grant. Supporters say the lanes cut commute times; critics worry about reduced parking.",
-  "generation_config": {
-    "temperature": 0.0,
-    "max_output_tokens": 256
-  },
-  "allow_inactive": true
-}
-```
-
-```bash
-curl -s localhost:8000/v1/inference:run \
-  -H 'content-type: application/json' \
-  -d '{
-    "model_name": "qwen2.5-1.5b-instruct",
-    "input_text": "The city council approved a plan to add 20 miles of protected bike lanes over three years, funded by a state grant. Supporters say the lanes cut commute times; critics worry about reduced parking.",
-    "generation_config": { "temperature": 0.0, "max_output_tokens": 256 },
-    "allow_inactive": true
-  }' | jq
-```
-
-### 5. Confirm the active-model gate
-
-`/inference` serves only active models. Deactivate one and watch it return `409`,
-then confirm `/v1/inference:run` still runs it with `allow_inactive`.
+`/inference` serves only active models. Deactivate one and watch it return `409`.
 
 Deactivate the model:
 
@@ -213,26 +186,6 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8000/inference \
   }'                                                                   # -> 409
 ```
 
-`POST /v1/inference:run` with `allow_inactive: true` still runs it. Request body:
-
-```json
-{
-  "model_name": "gemma-3-1b-it",
-  "input_text": "Summarize: the museum extended its weekend hours for the summer.",
-  "allow_inactive": true
-}
-```
-
-```bash
-curl -s -o /dev/null -w '%{http_code}\n' localhost:8000/v1/inference:run \
-  -H 'content-type: application/json' \
-  -d '{
-    "model_name": "gemma-3-1b-it",
-    "input_text": "Summarize: the museum extended its weekend hours for the summer.",
-    "allow_inactive": true
-  }'                                                                   # -> 201
-```
-
 Reactivate the model:
 
 ```bash
@@ -240,7 +193,7 @@ docker compose exec postgres psql -U arc -d arc_model_lab -c \
   "UPDATE models SET status='active' WHERE name='gemma-3-1b-it';"
 ```
 
-### 6. Verify the rows in the database
+### 5. Verify the rows in the database
 
 ```bash
 cd "$ML"
@@ -248,7 +201,7 @@ docker compose exec postgres psql -U arc -d arc_model_lab -c \
   "SELECT id, left(output_text, 50) AS output FROM inference ORDER BY created_at DESC LIMIT 5;"
 ```
 
-You should see the rows from steps 2 and 4. There are no score or experiment tables
+You should see the rows from step 2. There are no score or experiment tables
 in the lab: those live in arc-eval-service.
 
 ## Troubleshooting
@@ -264,5 +217,5 @@ in the lab: those live in arc-eval-service.
 
 - [usage.md](usage.md): the endpoints in detail.
 - Scoring and experiments end to end: `docs/end-to-end-testing.md` in the
-  arc-eval-service repository. Experiments call back into this service over
-  `POST /v1/inference:run`, so start arc-model-lab first.
+  arc-eval-service repository. arc-platform orchestrates the two services, so
+  start arc-model-lab first.
