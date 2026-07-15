@@ -1,11 +1,3 @@
-"""ModelService: device selection, caching, load orchestration, and generation.
-
-torch is installed in tests; only pretrained weights are not. These tests fake
-the ``from_pretrained`` boundary and the tokenizer/model objects, but feed real
-torch tensors through ``generate`` so the token accounting and slicing under
-test stays genuine (not a change-detector).
-"""
-
 from __future__ import annotations
 
 import pytest

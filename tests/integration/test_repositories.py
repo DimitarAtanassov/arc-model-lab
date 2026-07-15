@@ -1,29 +1,13 @@
-"""Repository round-trips against a real Postgres.
-
-Covers the mapping in both directions and the found/absent branches that the
-API-level tests do not exercise.
-"""
-
 from __future__ import annotations
 
-from uuid import UUID, uuid4
+from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from arc_model_lab.db.repositories import (
-    EvaluationResultRepository,
-    InferenceRepository,
-    ModelRepository,
-)
-from arc_model_lab.domain import (
-    EvaluationResult,
-    Inference,
-    Model,
-    ModelNotFoundError,
-    ModelStatus,
-    Provider,
-)
+from arc_model_lab.db.repositories import InferenceRepository, ModelRepository
+from arc_model_lab.domain import Inference, Model, ModelNotFoundError, ModelStatus, Provider
 
 pytestmark = pytest.mark.integration
 
@@ -32,77 +16,37 @@ def _model(name: str, *, model_id: str = "org/model", status: ModelStatus = Mode
     return Model(name=name, provider=Provider.HUGGINGFACE, model_id=model_id, tokenizer_id=model_id, status=status)
 
 
-def _persist_inference(session: Session, *, model_name: str = "m") -> Inference:
-    model = ModelRepository(session).upsert(_model(model_name))
-    inference = InferenceRepository(session).add(
-        Inference(model_id=model.id, input_text="in", prompt="p", output_text="out", latency_ms=5)
-    )
-    session.commit()
-    return inference
+async def test_get_by_name_returns_none_when_absent(db_session: AsyncSession) -> None:
+    assert await ModelRepository(db_session).get_by_name("ghost") is None
 
 
-def _result(
-    inference_id: UUID, *, metric: str = "faithfulness", score: float = 0.5, version: str = "v1"
-) -> EvaluationResult:
-    return EvaluationResult(
-        inference_id=inference_id,
-        metric_name=metric,
-        score=score,
-        evaluator_name="summary-faithfulness",
-        evaluator_version=version,
-    )
-
-
-def test_get_by_name_returns_none_when_absent(db_session: Session) -> None:
-    assert ModelRepository(db_session).get_by_name("ghost") is None
-
-
-def test_require_by_id_returns_model_or_raises(db_session: Session) -> None:
-    repo = ModelRepository(db_session)
-    model = repo.upsert(_model("present"))
-    db_session.commit()
-
-    assert repo.require_by_id(model.id).id == model.id
+async def test_require_by_name_raises_when_absent(db_session: AsyncSession) -> None:
     with pytest.raises(ModelNotFoundError):
-        repo.require_by_id(uuid4())
+        await ModelRepository(db_session).require_by_name("ghost")
 
 
-def test_list_all_returns_models_ordered_by_name(db_session: Session) -> None:
+async def test_list_all_returns_models_ordered_by_name(db_session: AsyncSession) -> None:
     repo = ModelRepository(db_session)
-    repo.add(_model("beta"))
-    repo.add(_model("alpha"))
+    await repo.add(_model("beta"))
+    await repo.add(_model("alpha"))
 
-    assert [m.name for m in repo.list_all()] == ["alpha", "beta"]
+    assert [m.name for m in await repo.list_all()] == ["alpha", "beta"]
 
 
-def test_upsert_inserts_then_updates_without_duplicating(db_session: Session) -> None:
+async def test_upsert_inserts_then_updates_without_duplicating(db_session: AsyncSession) -> None:
     repo = ModelRepository(db_session)
-    repo.upsert(_model("m", model_id="first/id"))
+    await repo.upsert(_model("m", model_id="first/id"))
 
-    updated = repo.upsert(_model("m", model_id="second/id", status=ModelStatus.INACTIVE))
+    updated = await repo.upsert(_model("m", model_id="second/id", status=ModelStatus.INACTIVE))
 
     assert updated.model_id == "second/id"
     assert updated.status is ModelStatus.INACTIVE
-    assert len(repo.list_all()) == 1
+    assert len(await repo.list_all()) == 1
 
 
-def test_set_status_updates_existing_model(db_session: Session) -> None:
-    repo = ModelRepository(db_session)
-    repo.add(_model("m", status=ModelStatus.ACTIVE))
-
-    updated = repo.set_status("m", ModelStatus.DEPRECATED)
-
-    assert updated is not None
-    assert updated.status is ModelStatus.DEPRECATED
-
-
-def test_set_status_returns_none_when_absent(db_session: Session) -> None:
-    assert ModelRepository(db_session).set_status("ghost", ModelStatus.INACTIVE) is None
-
-
-def test_inference_add_and_get_round_trip(db_session: Session) -> None:
-    ModelRepository(db_session).add(_model("m"))
-    model = ModelRepository(db_session).get_by_name("m")
+async def test_inference_add_and_get_round_trip(db_session: AsyncSession) -> None:
+    await ModelRepository(db_session).add(_model("m"))
+    model = await ModelRepository(db_session).get_by_name("m")
     assert model is not None
 
     repo = InferenceRepository(db_session)
@@ -115,57 +59,43 @@ def test_inference_add_and_get_round_trip(db_session: Session) -> None:
         prompt_tokens=2,
         completion_tokens=3,
     )
-    repo.add(inference)
+    await repo.add(inference)
 
-    fetched = repo.get(inference.id)
+    fetched = await repo.get(inference.id)
     assert fetched is not None
     assert fetched.model_id == model.id
     assert fetched.output_text == "out"
 
 
-def test_upsert_many_is_idempotent_on_the_metric_key(db_session: Session) -> None:
-    inference = _persist_inference(db_session)
-    repo = EvaluationResultRepository(db_session)
+async def test_inference_list_recent_orders_newest_first(db_session: AsyncSession) -> None:
+    model = await ModelRepository(db_session).upsert(_model("m"))
+    repo = InferenceRepository(db_session)
+    # Distinct created_at so the ordering is deterministic and actually asserted;
+    # rows written in one transaction would otherwise share now() and tie.
+    older = Inference(
+        model_id=model.id,
+        input_text="a",
+        prompt="p",
+        output_text="o",
+        latency_ms=1,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    newer = Inference(
+        model_id=model.id,
+        input_text="b",
+        prompt="p",
+        output_text="o",
+        latency_ms=1,
+        created_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    await repo.add(older)
+    await repo.add(newer)
+    await db_session.commit()
 
-    repo.upsert_many([_result(inference.id, score=0.5, version="v1")])
-    db_session.commit()
-    repo.upsert_many([_result(inference.id, score=0.9, version="v2")])
-    db_session.commit()
+    recent = await repo.list_recent(10)
 
-    stored = repo.list_for_inference(inference.id)
-    assert len(stored) == 1
-    assert stored[0].score == 0.9
-    assert stored[0].evaluator_version == "v2"
-
-
-def test_upsert_many_with_no_results_is_a_noop(db_session: Session) -> None:
-    inference = _persist_inference(db_session)
-    repo = EvaluationResultRepository(db_session)
-
-    assert repo.upsert_many([]) == []
-    assert repo.list_for_inference(inference.id) == []
-
-
-def test_list_unevaluated_returns_only_rows_without_results(db_session: Session) -> None:
-    evaluated = _persist_inference(db_session, model_name="m1")
-    unevaluated = _persist_inference(db_session, model_name="m2")
-    EvaluationResultRepository(db_session).upsert_many([_result(evaluated.id)])
-    db_session.commit()
-
-    pending = InferenceRepository(db_session).list_unevaluated(limit=10)
-
-    assert [inference.id for inference in pending] == [unevaluated.id]
+    assert [inference.id for inference in recent] == [newer.id, older.id]
 
 
-def test_list_unevaluated_honors_the_created_before_window(db_session: Session) -> None:
-    inference = _persist_inference(db_session)
-
-    before = InferenceRepository(db_session).list_unevaluated(limit=10, created_before=inference.created_at)
-    after = InferenceRepository(db_session).list_unevaluated(limit=10, created_after=inference.created_at)
-
-    assert before == []
-    assert [row.id for row in after] == [inference.id]
-
-
-def test_inference_get_returns_none_when_absent(db_session: Session) -> None:
-    assert InferenceRepository(db_session).get(uuid4()) is None
+async def test_inference_get_returns_none_when_absent(db_session: AsyncSession) -> None:
+    assert await InferenceRepository(db_session).get(uuid4()) is None

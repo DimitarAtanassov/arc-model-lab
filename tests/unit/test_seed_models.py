@@ -1,18 +1,12 @@
-"""Seed loader: validation rules, the ``--check`` path, and a real DB write.
-
-The loader is pure and stdlib-only, so validation is unit-tested with temp JSON
-files. ``seed`` itself opens its own engine, so it is exercised once against a
-real Postgres to prove rows are committed.
-"""
-
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import Engine, select
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from arc_model_lab.config import Settings
 from arc_model_lab.db import seed_models
@@ -94,7 +88,7 @@ def test_main_check_validates_without_writing(tmp_path: Path, capsys: pytest.Cap
 def test_main_seeds_and_reports_count(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(seed_models, "seed", lambda _path: 3)
+    monkeypatch.setattr(seed_models, "seed", AsyncMock(return_value=3))
 
     seed_models.main([str(tmp_path / "seed.json")])
 
@@ -102,16 +96,16 @@ def test_main_seeds_and_reports_count(
 
 
 @pytest.mark.integration
-def test_seed_writes_rows_to_database(
-    engine: Engine, db_session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+async def test_seed_writes_rows_to_database(
+    engine: AsyncEngine, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     url = engine.url.render_as_string(hide_password=False)
     monkeypatch.setattr(seed_models, "get_settings", lambda: Settings(database_url=url))
     path = tmp_path / "seed.json"
     path.write_text(json.dumps([_entry("m1"), _entry("m2")]))
 
-    count = seed_models.seed(path)
+    count = await seed_models.seed(path)
 
     assert count == 2
-    rows = db_session.execute(select(ModelRecord)).scalars().all()
+    rows = (await db_session.execute(select(ModelRecord))).scalars().all()
     assert {row.name for row in rows} == {"m1", "m2"}

@@ -1,5 +1,3 @@
-"""Response contract for the model-catalog read endpoints."""
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -17,7 +15,7 @@ class ModelResponse(BaseModel):
     name: str
     provider: str
     # The provider-native identifier (for HuggingFace, the repo id). Distinct from
-    # ``name``, which is the unique catalog handle callers pass as ``model_name``.
+    # name, which is the unique catalog handle callers pass as model_name.
     model_id: str
     tokenizer_id: str
     revision: str | None

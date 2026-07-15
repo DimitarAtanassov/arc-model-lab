@@ -1,12 +1,10 @@
-"""Composition root: lifespan wiring and the console entrypoint."""
-
 from __future__ import annotations
 
 import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from arc_model_lab import main as main_module
 from arc_model_lab.config import Settings, get_settings
@@ -20,7 +18,7 @@ def test_lifespan_populates_application_state() -> None:
 
     with TestClient(app):
         assert app.state.engine is not None
-        assert isinstance(app.state.session_factory, sessionmaker)
+        assert isinstance(app.state.session_factory, async_sessionmaker)
         assert isinstance(app.state.model_service, ModelService)
         assert isinstance(app.state.inference_service, InferenceService)
 
@@ -45,26 +43,19 @@ def test_run_invokes_uvicorn_with_configured_host_and_port(monkeypatch: pytest.M
     assert captured == {"target": "arc_model_lab.main:app", "host": settings.api_host, "port": settings.api_port}
 
 
-def test_lifespan_closes_eval_client_and_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    closed = False
+def test_lifespan_disposes_engine_on_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
     disposed = False
 
-    class _DummyEvalClient:
-        def close(self) -> None:
-            nonlocal closed
-            closed = True
-
     class _DummyEngine:
-        def dispose(self) -> None:
+        async def dispose(self) -> None:
             nonlocal disposed
             disposed = True
 
-    monkeypatch.setattr(main_module, "create_engine_from_url", lambda *args, **kwargs: _DummyEngine())
-    monkeypatch.setattr(main_module, "create_session_factory", lambda engine: object())
+    monkeypatch.setattr(main_module, "create_async_engine_from_url", lambda *args, **kwargs: _DummyEngine())
+    monkeypatch.setattr(main_module, "create_async_session_factory", lambda engine: object())
     monkeypatch.setattr(main_module, "ModelService", lambda settings: object())
-    monkeypatch.setattr(main_module, "build_arc_eval_client", lambda settings: _DummyEvalClient())
-    monkeypatch.setattr(main_module, "InferenceService", lambda model_service: object())
-    monkeypatch.setattr(main_module, "EvaluationService", lambda eval_client: object())
+    monkeypatch.setattr(main_module, "load_prompt_library", object)
+    monkeypatch.setattr(main_module, "InferenceService", lambda model_service, prompt_library: object())
 
     app = create_app(Settings(database_url="postgresql://example/test"))
 
@@ -74,33 +65,4 @@ def test_lifespan_closes_eval_client_and_disposes_engine(monkeypatch: pytest.Mon
 
     asyncio.run(_exercise())
 
-    assert closed is True
-    assert disposed is True
-
-
-def test_lifespan_disposes_engine_without_eval_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    closed = False
-    disposed = False
-
-    class _DummyEngine:
-        def dispose(self) -> None:
-            nonlocal disposed
-            disposed = True
-
-    monkeypatch.setattr(main_module, "create_engine_from_url", lambda *args, **kwargs: _DummyEngine())
-    monkeypatch.setattr(main_module, "create_session_factory", lambda engine: object())
-    monkeypatch.setattr(main_module, "ModelService", lambda settings: object())
-    monkeypatch.setattr(main_module, "build_arc_eval_client", lambda settings: None)
-    monkeypatch.setattr(main_module, "InferenceService", lambda model_service: object())
-    monkeypatch.setattr(main_module, "EvaluationService", lambda eval_client: object())
-
-    app = create_app(Settings(database_url="postgresql://example/test"))
-
-    async def _exercise() -> None:
-        async with main_module.lifespan(app):
-            pass
-
-    asyncio.run(_exercise())
-
-    assert closed is False
     assert disposed is True

@@ -1,5 +1,3 @@
-"""Unit tests for domain entity defaults."""
-
 from __future__ import annotations
 
 from uuid import UUID, uuid4

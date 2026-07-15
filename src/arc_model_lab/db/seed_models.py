@@ -1,17 +1,12 @@
-"""Seed the model catalog from a JSON file (idempotent upsert).
-
-python -m arc_model_lab.db.seed_models seeds/models.local.json
-python -m arc_model_lab.db.seed_models --check seeds/models.local.json   # validate only
-"""
-
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 from pathlib import Path
 
 from arc_model_lab.config import get_settings
-from arc_model_lab.db.base import create_engine_from_url, create_session_factory
+from arc_model_lab.db.base import create_async_engine_from_url, create_async_session_factory
 from arc_model_lab.db.repositories import ModelRepository
 from arc_model_lab.domain import Model, ModelStatus, Provider
 
@@ -55,18 +50,18 @@ def _optional_str(value: object) -> str | None:
     return str(value) if value is not None else None
 
 
-def seed(path: Path) -> int:
+async def seed(path: Path) -> int:
     models = load_models(path)
-    engine = create_engine_from_url(get_settings().database_url)
+    engine = create_async_engine_from_url(get_settings().database_url)
     try:
-        session_factory = create_session_factory(engine)
-        with session_factory() as session:
+        session_factory = create_async_session_factory(engine)
+        async with session_factory() as session:
             repository = ModelRepository(session)
             for model in models:
-                repository.upsert(model)
-            session.commit()
+                await repository.upsert(model)
+            await session.commit()
     finally:
-        engine.dispose()
+        await engine.dispose()
     return len(models)
 
 
@@ -81,7 +76,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Seed file OK: {count} model(s)")
         return
 
-    count = seed(args.path)
+    count = asyncio.run(seed(args.path))
     print(f"Seeded {count} model(s)")
 
 
