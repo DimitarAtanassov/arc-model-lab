@@ -100,6 +100,7 @@ class InferenceService:
             latency_ms=result.latency_ms,
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
+            generation_config=config,
         )
         persisted = await InferenceRepository(session).add(inference)
         await session.commit()

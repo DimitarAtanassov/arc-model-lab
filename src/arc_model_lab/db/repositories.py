@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from arc_model_lab.db.models import InferenceRecord, ModelRecord
 from arc_model_lab.domain import (
+    GenerationConfig,
     Inference,
     Model,
     ModelNotFoundError,
@@ -117,6 +118,7 @@ def _to_inference(record: InferenceRecord) -> Inference:
         latency_ms=record.latency_ms,
         prompt_tokens=record.prompt_tokens,
         completion_tokens=record.completion_tokens,
+        generation_config=GenerationConfig.from_dict(record.generation_config),
         created_at=record.created_at,
     )
 
@@ -131,5 +133,6 @@ def _to_inference_record(inference: Inference) -> InferenceRecord:
         latency_ms=inference.latency_ms,
         prompt_tokens=inference.prompt_tokens,
         completion_tokens=inference.completion_tokens,
+        generation_config=inference.generation_config.to_dict(),
         created_at=inference.created_at,
     )

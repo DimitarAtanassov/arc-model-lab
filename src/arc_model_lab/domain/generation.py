@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from arc_model_lab.domain.exceptions import InvalidGenerationConfigError
 
@@ -29,6 +31,22 @@ class GenerationConfig:
         # validators' coerced return values are used rather than discarded.
         object.__setattr__(self, "temperature", _temperature(self.temperature))
         object.__setattr__(self, "max_output_tokens", _positive_int("max_output_tokens", self.max_output_tokens))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-safe mapping for persistence (the inference row)."""
+        return {"temperature": self.temperature, "max_output_tokens": self.max_output_tokens}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> GenerationConfig:
+        """Rebuild from a stored mapping, defaulting any missing knob.
+
+        A pre-capture row persisted ``{}`` and rehydrates to the greedy default;
+        every value is re-validated through the constructor.
+        """
+        return cls(
+            temperature=data.get("temperature", DEFAULT_TEMPERATURE),
+            max_output_tokens=data.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS),
+        )
 
 
 def _positive_int(name: str, value: object) -> int:

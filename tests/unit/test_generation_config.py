@@ -72,3 +72,21 @@ def test_int_temperature_is_normalized_to_float() -> None:
 
     assert isinstance(config.temperature, float)
     assert config.temperature == 1.0
+
+
+def test_to_dict_round_trips_through_from_dict() -> None:
+    # Persistence contract: what to_dict writes, from_dict reads back unchanged.
+    config = GenerationConfig(temperature=0.7, max_output_tokens=128)
+
+    assert GenerationConfig.from_dict(config.to_dict()) == config
+
+
+def test_from_dict_defaults_missing_knobs() -> None:
+    # A pre-capture row persisted {} rehydrates to the greedy default.
+    assert GenerationConfig.from_dict({}) == GenerationConfig()
+
+
+def test_from_dict_revalidates_stored_values() -> None:
+    # A corrupt stored config is rejected at read, not silently trusted.
+    with pytest.raises(InvalidGenerationConfigError):
+        GenerationConfig.from_dict({"temperature": 9.0, "max_output_tokens": 256})
