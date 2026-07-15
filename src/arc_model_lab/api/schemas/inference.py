@@ -3,15 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from arc_model_lab.domain import Inference
-from arc_model_lab.domain.generation import (
-    DEFAULT_MAX_OUTPUT_TOKENS,
-    DEFAULT_TEMPERATURE,
-    MAX_TEMPERATURE,
-    GenerationConfig,
-)
+from arc_model_lab.domain.generation import MAX_TEMPERATURE
 
 _PREVIEW_CHARS = 160
 
@@ -42,63 +37,6 @@ class InferenceRequest(BaseModel):
             "Omit to use the server default (ARC_TEMPERATURE)."
         ),
     )
-    prompt_template: str | None = Field(
-        default=None,
-        min_length=1,
-        description="Optional prompt template name; omit to send input_text to the model as-is.",
-    )
-    variables: dict[str, str] = Field(
-        default_factory=dict,
-        description="Values filling the template's placeholders; input_text is supplied separately.",
-    )
-
-    @model_validator(mode="after")
-    def _variables_require_a_template(self) -> InferenceRequest:
-        if self.variables and self.prompt_template is None:
-            raise ValueError("variables require a prompt_template")
-        return self
-
-
-class GenerationConfigSchema(BaseModel):
-    """The decoding config a service-to-service caller sends explicitly."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=MAX_TEMPERATURE)
-    max_output_tokens: int = Field(default=DEFAULT_MAX_OUTPUT_TOKENS, ge=1)
-
-    def to_domain(self) -> GenerationConfig:
-        return GenerationConfig(temperature=self.temperature, max_output_tokens=self.max_output_tokens)
-
-
-class InferenceRunRequest(BaseModel):
-    # Service-to-service body for POST /v1/inference:run. Unlike /inference it
-    # carries a full generation config (temperature and max_output_tokens) and may
-    # run an inactive candidate model.
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
-
-    model_name: str = Field(min_length=1, description="Catalog model to run.")
-    input_text: str = Field(min_length=1, description="Text to run through the model.")
-    generation_config: GenerationConfigSchema = Field(default_factory=GenerationConfigSchema)
-    allow_inactive: bool = Field(
-        default=False,
-        description="Run the model even if it is not active. Off by default so the endpoint fails closed.",
-    )
-    prompt_template: str | None = Field(
-        default=None,
-        min_length=1,
-        description="Optional prompt template name; omit to send input_text to the model as-is.",
-    )
-    variables: dict[str, str] = Field(
-        default_factory=dict,
-        description="Values filling the template's placeholders; input_text is supplied separately.",
-    )
-
-    @model_validator(mode="after")
-    def _variables_require_a_template(self) -> InferenceRunRequest:
-        if self.variables and self.prompt_template is None:
-            raise ValueError("variables require a prompt_template")
-        return self
 
 
 class InferenceResponse(BaseModel):

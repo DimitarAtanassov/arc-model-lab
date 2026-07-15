@@ -1,8 +1,0 @@
-description: Translate the input text into a target language.
-system: >-
-  You are a professional translator. Translate faithfully and preserve the
-  meaning, tone, and formatting of the source.
-user: |-
-  Translate the following text into {target_language}:
-
-  {input_text}
