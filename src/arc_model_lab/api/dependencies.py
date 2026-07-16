@@ -5,8 +5,10 @@ from collections.abc import AsyncIterator
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from arc_model_lab.config import Settings
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_catalog_service import ModelCatalogService
+from arc_model_lab.services.preset_service import PresetService
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -28,3 +30,13 @@ def get_inference_service(request: Request) -> InferenceService:
 def get_model_catalog_service(request: Request) -> ModelCatalogService:
     service: ModelCatalogService = request.app.state.model_catalog_service
     return service
+
+
+def get_preset_service(request: Request) -> PresetService:
+    service: PresetService = request.app.state.preset_service
+    return service
+
+
+def get_settings(request: Request) -> Settings:
+    settings: Settings = request.app.state.settings
+    return settings

@@ -24,10 +24,11 @@ from arc_model_lab.main import create_app
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_catalog_service import ModelCatalogService
 from arc_model_lab.services.model_service import ChatMessage, GenerationResult, ModelService
+from arc_model_lab.services.preset_service import PresetService
 
 _TEST_MODEL_NAME = "test-model"
 # Truncated together under CASCADE, so foreign-key order does not matter.
-_TABLES = ("inference", "models")
+_TABLES = ("inference", "models", "generation_preset")
 
 
 class FakeModelService(ModelService):
@@ -226,10 +227,14 @@ async def build_app(
     async with session_factory() as session:
         await ModelRepository(session).upsert(_test_model())
         await session.commit()
-    app.dependency_overrides[get_inference_service] = lambda: InferenceService(model_service)
+    preset_service = PresetService(app.state.settings.max_output_tokens_cap)
+    app.dependency_overrides[get_inference_service] = lambda: InferenceService(
+        model_service, preset_service, app.state.settings.max_output_tokens_cap
+    )
     # The catalog read service has no I/O seam to fake, so wire the real one into
     # app state the way lifespan does; the read endpoints resolve it from there.
     app.state.model_catalog_service = ModelCatalogService()
+    app.state.preset_service = preset_service
     return app
 
 

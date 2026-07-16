@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
     temperature: float = DEFAULT_TEMPERATURE
 
+    # Server-authoritative ceiling for a caller-supplied max_output_tokens. The
+    # registry carries only the floor and default; this cap is the runtime maximum,
+    # enforced as a 422 at the boundary and reported by GET /generation/params. The
+    # worst-case compute a single call can demand is num_beams_cap x this value.
+    max_output_tokens_cap: int = 2048
+
     # HTTP server
     api_host: str = "0.0.0.0"  # noqa: S104 — bind all interfaces for containerized serving
     api_port: int = 8000

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -60,14 +62,70 @@ async def test_unknown_model_returns_404(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
-async def test_temperature_out_of_range_returns_422(client: AsyncClient) -> None:
-    response = await client.post("/inference", json=_body(temperature=5.0))
+async def test_top_level_temperature_is_rejected(client: AsyncClient) -> None:
+    # Regression: temperature is no longer a top-level field; it lives only inside
+    # model_params. A legacy top-level temperature is an unknown field (422).
+    response = await client.post("/inference", json=_body(temperature=0.7))
     assert response.status_code == 422
 
 
-async def test_explicit_temperature_is_accepted(client: AsyncClient) -> None:
-    response = await client.post("/inference", json=_body(temperature=0.7))
+async def test_model_params_temperature_is_accepted(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body(model_params={"temperature": 0.7}))
     assert response.status_code == 201
+
+
+async def test_model_params_temperature_out_of_range_returns_422(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body(model_params={"temperature": 5.0}))
+    assert response.status_code == 422
+
+
+async def test_model_params_unknown_knob_returns_422(client: AsyncClient) -> None:
+    # model_params is the registry allow-list; an unknown knob is a 422.
+    response = await client.post("/inference", json=_body(model_params={"nonsense": 1}))
+    assert response.status_code == 422
+
+
+async def test_model_params_illegal_combination_returns_422(client: AsyncClient) -> None:
+    # Beam search cannot combine with sampling params; the merged config is a 422.
+    response = await client.post("/inference", json=_body(model_params={"num_beams": 2, "top_p": 0.9}))
+    assert response.status_code == 422
+
+
+async def test_unknown_preset_returns_404(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body(preset_id=_UNKNOWN_ID))
+    assert response.status_code == 404
+
+
+async def test_preset_seeds_config_and_is_recorded_on_the_response(client: AsyncClient) -> None:
+    created = await client.post(
+        "/presets",
+        json={"name": "balanced", "config": {"do_sample": True, "temperature": 0.8}},
+    )
+    assert created.status_code == 201
+    preset_id = created.json()["id"]
+
+    response = await client.post("/inference", json=_body(preset_id=preset_id))
+
+    assert response.status_code == 201
+    body = response.json()
+    # The response carries the resolved config and the informing preset id.
+    assert body["preset_id"] == preset_id
+    assert body["generation_config"]["temperature"] == 0.8
+    assert body["generation_config"]["do_sample"] is True
+
+
+async def test_model_params_win_over_preset_in_the_response(client: AsyncClient) -> None:
+    created = await client.post(
+        "/presets",
+        json={"name": "seed", "config": {"do_sample": True, "temperature": 0.8, "top_p": 0.9}},
+    )
+    preset_id = created.json()["id"]
+
+    body = (await client.post("/inference", json=_body(preset_id=preset_id, model_params={"temperature": 1.2}))).json()
+
+    # Override beats the preset on temperature; the preset's other knob is inherited.
+    assert body["generation_config"]["temperature"] == 1.2
+    assert body["generation_config"]["top_p"] == 0.9
 
 
 async def test_metrics_field_is_rejected(client: AsyncClient) -> None:
@@ -184,3 +242,27 @@ async def test_get_inference_returns_the_inference(
 
 async def test_get_unknown_inference_returns_404(client: AsyncClient) -> None:
     assert (await client.get(f"/inference/{_UNKNOWN_ID}")).status_code == 404
+
+
+async def test_resolved_config_and_preset_id_persist_on_the_row(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    # Persist a preset, run an inference that layers an override on it, then read the
+    # row straight from the DB to prove the resolved config and lineage link are stored.
+    created = await client.post(
+        "/presets",
+        json={"name": "balanced", "config": {"do_sample": True, "temperature": 0.8, "top_p": 0.9}},
+    )
+    preset_id = created.json()["id"]
+
+    body = (await client.post("/inference", json=_body(preset_id=preset_id, model_params={"temperature": 1.2}))).json()
+
+    async with session_factory() as session:
+        row = await InferenceRepository(session).get(UUID(body["id"]))
+
+    assert row is not None
+    assert row.preset_id == UUID(preset_id)
+    # The row stores the resolved config (override > preset), not the raw inputs.
+    assert row.generation_config.temperature == 1.2
+    assert row.generation_config.top_p == 0.9
+    assert row.generation_config.do_sample is True

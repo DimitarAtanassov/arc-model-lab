@@ -3,15 +3,19 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from arc_model_lab.db.models import InferenceRecord, ModelRecord
+from arc_model_lab.db.models import GenerationPresetRecord, InferenceRecord, ModelRecord
 from arc_model_lab.domain import (
     GenerationConfig,
+    GenerationPreset,
     Inference,
     Model,
     ModelNotFoundError,
     ModelStatus,
+    PresetNameConflictError,
+    PresetStatus,
     Provider,
 )
 
@@ -78,6 +82,67 @@ class InferenceRepository:
         return [_to_inference(record) for record in records]
 
 
+# Postgres unique_violation; the authority behind the duplicate-active-name 409.
+_UNIQUE_VIOLATION = "23505"
+
+
+class PresetRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, preset: GenerationPreset) -> GenerationPreset:
+        """Persist a new preset, translating a duplicate active name to a domain 409.
+
+        The partial unique index is the authority: catching its violation here means
+        two concurrent creates of the same name both resolve to PresetNameConflictError
+        rather than one racing to a 500 (any service-level pre-check is a fast path only).
+        """
+        self._session.add(_to_preset_record(preset))
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            if getattr(exc.orig, "sqlstate", None) == _UNIQUE_VIOLATION:
+                raise PresetNameConflictError(f"An active preset already uses the name: {preset.name}") from exc
+            raise
+        return preset
+
+    async def get(self, preset_id: UUID) -> GenerationPreset | None:
+        record = await self._session.get(GenerationPresetRecord, preset_id)
+        return _to_preset(record) if record is not None else None
+
+    async def get_active_by_name(self, name: str) -> GenerationPreset | None:
+        record = await self._session.scalar(
+            select(GenerationPresetRecord).where(
+                GenerationPresetRecord.name == name,
+                GenerationPresetRecord.status == PresetStatus.ACTIVE.value,
+            )
+        )
+        return _to_preset(record) if record is not None else None
+
+    async def list_active(self) -> list[GenerationPreset]:
+        """Return active presets, newest first (archived presets stay hidden)."""
+        records = (
+            await self._session.scalars(
+                select(GenerationPresetRecord)
+                .where(GenerationPresetRecord.status == PresetStatus.ACTIVE.value)
+                .order_by(GenerationPresetRecord.created_at.desc())
+            )
+        ).all()
+        return [_to_preset(record) for record in records]
+
+    async def update(self, preset: GenerationPreset) -> GenerationPreset:
+        """Persist edits to description, config, and/or status on an existing preset."""
+        record = await self._session.get(GenerationPresetRecord, preset.id)
+        if record is None:
+            return preset
+        record.description = preset.description
+        record.config = preset.config.to_dict()
+        record.status = preset.status.value
+        await self._session.flush()
+        await self._session.refresh(record)
+        return _to_preset(record)
+
+
 def _to_model(record: ModelRecord) -> Model:
     return Model(
         id=record.id,
@@ -119,6 +184,7 @@ def _to_inference(record: InferenceRecord) -> Inference:
         prompt_tokens=record.prompt_tokens,
         completion_tokens=record.completion_tokens,
         generation_config=GenerationConfig.from_dict(record.generation_config),
+        preset_id=record.preset_id,
         created_at=record.created_at,
     )
 
@@ -134,5 +200,30 @@ def _to_inference_record(inference: Inference) -> InferenceRecord:
         prompt_tokens=inference.prompt_tokens,
         completion_tokens=inference.completion_tokens,
         generation_config=inference.generation_config.to_dict(),
+        preset_id=inference.preset_id,
         created_at=inference.created_at,
+    )
+
+
+def _to_preset(record: GenerationPresetRecord) -> GenerationPreset:
+    return GenerationPreset(
+        id=record.id,
+        name=record.name,
+        description=record.description,
+        config=GenerationConfig.from_dict(record.config),
+        status=PresetStatus(record.status),
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+def _to_preset_record(preset: GenerationPreset) -> GenerationPresetRecord:
+    return GenerationPresetRecord(
+        id=preset.id,
+        name=preset.name,
+        description=preset.description,
+        config=preset.config.to_dict(),
+        status=preset.status.value,
+        created_at=preset.created_at,
+        updated_at=preset.updated_at,
     )

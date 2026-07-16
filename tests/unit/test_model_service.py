@@ -202,3 +202,70 @@ def test_generate_threads_decoding_config(
     assert ("temperature" in captured) is expect_sampling
     if expect_sampling:
         assert captured["temperature"] == temperature
+
+
+def test_generate_seeds_rng_when_seed_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A seeded config calls transformers.set_seed exactly once before generation,
+    # so sampling is reproducible on the same device (see spec 0001 §1.5).
+    seeds: list[int] = []
+    monkeypatch.setattr(model_service_module, "set_seed", seeds.append)
+
+    service = _service()
+    runtime = RuntimeModel(tokenizer=_FakeTokenizer(), model=_FakeModel(), device="cpu")
+    monkeypatch.setattr(service, "load", lambda _model: runtime)
+
+    service.generate(_model(), _MESSAGES, GenerationConfig(do_sample=True, temperature=0.7, seed=123))
+
+    assert seeds == [123]
+
+
+def test_generate_does_not_seed_when_seed_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    seeds: list[int] = []
+    monkeypatch.setattr(model_service_module, "set_seed", seeds.append)
+
+    service = _service()
+    runtime = RuntimeModel(tokenizer=_FakeTokenizer(), model=_FakeModel(), device="cpu")
+    monkeypatch.setattr(service, "load", lambda _model: runtime)
+
+    service.generate(_model(), _MESSAGES, GenerationConfig())
+
+    assert seeds == []
+
+
+def test_generate_passes_tokenizer_with_stop_strings(monkeypatch: pytest.MonkeyPatch) -> None:
+    # transformers.generate needs the tokenizer to encode stop_strings; the service
+    # threads it through only when a stop list is present.
+    captured: dict[str, object] = {}
+
+    class _CapturingModel(_FakeModel):
+        def generate(self, *, input_ids: torch.Tensor, max_new_tokens: int, **kwargs: object) -> torch.Tensor:
+            captured.update(kwargs)
+            return torch.cat([input_ids, torch.tensor([[4, 5]])], dim=1)
+
+    service = _service()
+    tokenizer = _FakeTokenizer()
+    runtime = RuntimeModel(tokenizer=tokenizer, model=_CapturingModel(), device="cpu")
+    monkeypatch.setattr(service, "load", lambda _model: runtime)
+
+    service.generate(_model(), _MESSAGES, GenerationConfig(stop=["END"]))
+
+    assert captured["stop_strings"] == ["END"]
+    assert captured["tokenizer"] is tokenizer
+
+
+def test_generate_omits_tokenizer_without_stop_strings(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _CapturingModel(_FakeModel):
+        def generate(self, *, input_ids: torch.Tensor, max_new_tokens: int, **kwargs: object) -> torch.Tensor:
+            captured.update(kwargs)
+            return torch.cat([input_ids, torch.tensor([[4, 5]])], dim=1)
+
+    service = _service()
+    runtime = RuntimeModel(tokenizer=_FakeTokenizer(), model=_CapturingModel(), device="cpu")
+    monkeypatch.setattr(service, "load", lambda _model: runtime)
+
+    service.generate(_model(), _MESSAGES, GenerationConfig())
+
+    assert "tokenizer" not in captured
+    assert "stop_strings" not in captured

@@ -36,3 +36,15 @@ class InferenceNotFoundError(DomainError):
 
 class InvalidGenerationConfigError(DomainError):
     """A generation config names an unknown knob or an invalid value (422)."""
+
+
+class PresetNotFoundError(DomainError):
+    """The requested preset does not exist or is archived and hidden (404)."""
+
+
+class PresetNameConflictError(DomainError):
+    """An active preset already uses this name (409).
+
+    Raised by catching the partial-index unique violation on create, so two
+    concurrent creates of the same name both resolve to 409 rather than a 500.
+    """

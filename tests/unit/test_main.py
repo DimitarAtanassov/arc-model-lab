@@ -54,7 +54,9 @@ def test_lifespan_disposes_engine_on_shutdown(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(main_module, "create_async_engine_from_url", lambda *args, **kwargs: _DummyEngine())
     monkeypatch.setattr(main_module, "create_async_session_factory", lambda engine: object())
     monkeypatch.setattr(main_module, "ModelService", lambda settings: object())
-    monkeypatch.setattr(main_module, "InferenceService", lambda model_service: object())
+    monkeypatch.setattr(
+        main_module, "InferenceService", lambda model_service, preset_service, max_output_tokens_cap: object()
+    )
 
     app = create_app(Settings(database_url="postgresql://example/test"))
 

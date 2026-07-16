@@ -26,7 +26,7 @@ services:
     # The app binds ARC_API_HOST/ARC_API_PORT (config.py) after migrating and
     # seeding, so a single .env drives both the in-container bind and the
     # published port below.
-    command: ["sh", "-c", "alembic upgrade head && python -m arc_model_lab.db.seed_models seeds/models.local.json && python -m arc_model_lab.main"]
+    command: ["sh", "-c", "alembic upgrade head && python -m arc_model_lab.db.seed_models seeds/models.local.json && python -m arc_model_lab.db.seed_presets seeds/presets.local.json && python -m arc_model_lab.main"]
     env_file:
       - path: .env
         required: false

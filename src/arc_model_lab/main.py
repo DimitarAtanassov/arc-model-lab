@@ -13,6 +13,7 @@ from arc_model_lab.db.base import create_async_engine_from_url, create_async_ses
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_catalog_service import ModelCatalogService
 from arc_model_lab.services.model_service import ModelService
+from arc_model_lab.services.preset_service import PresetService
 
 
 @asynccontextmanager
@@ -26,8 +27,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.model_service = model_service
-    app.state.inference_service = InferenceService(model_service)
     app.state.model_catalog_service = ModelCatalogService()
+    preset_service = PresetService(settings.max_output_tokens_cap)
+    app.state.preset_service = preset_service
+    app.state.inference_service = InferenceService(model_service, preset_service, settings.max_output_tokens_cap)
 
     try:
         yield

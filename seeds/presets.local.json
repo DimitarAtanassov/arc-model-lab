@@ -1,0 +1,22 @@
+[
+  {
+    "name": "greedy",
+    "description": "Deterministic baseline (greedy decoding).",
+    "config": { "do_sample": false, "max_output_tokens": 256 }
+  },
+  {
+    "name": "balanced",
+    "description": "Mild sampling for general-purpose generation.",
+    "config": { "do_sample": true, "temperature": 0.7, "top_p": 0.9, "max_output_tokens": 512 }
+  },
+  {
+    "name": "creative",
+    "description": "Freer sampling for varied, exploratory output.",
+    "config": { "do_sample": true, "temperature": 1.1, "top_p": 0.95, "max_output_tokens": 768 }
+  },
+  {
+    "name": "precise-beam",
+    "description": "Deterministic beam search.",
+    "config": { "num_beams": 4, "max_output_tokens": 512 }
+  }
+]

@@ -14,6 +14,8 @@ from arc_model_lab.domain import (
     ModelInactiveError,
     ModelLoadError,
     ModelNotFoundError,
+    PresetNameConflictError,
+    PresetNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,14 @@ async def _model_inactive(request: Request, exc: Exception) -> Response:
 
 async def _inference_not_found(request: Request, exc: Exception) -> Response:
     return _error(status.HTTP_404_NOT_FOUND, str(exc) or "Inference not found")
+
+
+async def _preset_not_found(request: Request, exc: Exception) -> Response:
+    return _error(status.HTTP_404_NOT_FOUND, str(exc) or "Preset not found")
+
+
+async def _preset_name_conflict(request: Request, exc: Exception) -> Response:
+    return _error(status.HTTP_409_CONFLICT, str(exc) or "Preset name is already in use")
 
 
 async def _invalid_generation_config(request: Request, exc: Exception) -> Response:
@@ -81,6 +91,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ModelNotFoundError, _model_not_found)
     app.add_exception_handler(ModelInactiveError, _model_inactive)
     app.add_exception_handler(InferenceNotFoundError, _inference_not_found)
+    app.add_exception_handler(PresetNotFoundError, _preset_not_found)
+    app.add_exception_handler(PresetNameConflictError, _preset_name_conflict)
     app.add_exception_handler(InvalidGenerationConfigError, _invalid_generation_config)
     app.add_exception_handler(InputTooLargeError, _input_too_large)
     app.add_exception_handler(ModelLoadError, _model_load_error)

@@ -30,7 +30,8 @@ async def infer(
         session,
         model_name=payload.model_name,
         input_text=payload.input_text,
-        temperature=payload.temperature,
+        preset_id=payload.preset_id,
+        model_params=payload.model_params.to_config_dict() if payload.model_params is not None else None,
     )
     return InferenceResponse.from_inference(inference)
 
