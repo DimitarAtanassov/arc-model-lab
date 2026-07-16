@@ -65,8 +65,10 @@ class InferenceRecord(Base):
     # row run from ad-hoc params or server defaults references no preset. ON DELETE
     # RESTRICT plus the archive soft-delete keeps the link valid without ever blocking
     # in practice. generation_config above, not this, is the reproducibility source.
+    # Indexed for the FK's ON DELETE RESTRICT check and "inferences by preset" reads;
+    # migration 0010 builds it CONCURRENTLY (name: ix_inference_preset_id).
     preset_id: Mapped[UUID | None] = mapped_column(
-        Uuid, ForeignKey("generation_preset.id", ondelete="RESTRICT"), nullable=True
+        Uuid, ForeignKey("generation_preset.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

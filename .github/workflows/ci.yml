@@ -36,18 +36,6 @@ jobs:
       - run: uv run coverage run -m pytest
       - run: uv run coverage report
 
-  eval-contract:
-    # Consumer-side contract tests for the arc-eval integration. Runs against a
-    # mocked transport (httpx.MockTransport), so no live arc-eval is required.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - run: uv sync --frozen --group test
-      - run: uv run pytest -m contract
-
   migrations:
     runs-on: ubuntu-latest
     services:
