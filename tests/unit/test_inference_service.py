@@ -8,37 +8,39 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from arc_model_lab.config import Settings
 from arc_model_lab.domain import (
     GenerationConfig,
+    GenerationPreset,
     InputTooLargeError,
     Model,
     ModelInactiveError,
     ModelNotFoundError,
     ModelStatus,
-    PromptInput,
-    PromptTemplate,
+    PresetNotFoundError,
+    PresetStatus,
     Provider,
 )
-from arc_model_lab.prompts.loader import PromptLibrary
 from arc_model_lab.services import inference_service as inference_service_module
+from arc_model_lab.services import preset_service as preset_service_module
 from arc_model_lab.services.inference_service import InferenceService
 from arc_model_lab.services.model_service import ChatMessage, GenerationResult, ModelService
+from arc_model_lab.services.preset_service import PresetService
 
-
-def _config() -> GenerationConfig:
-    return GenerationConfig(temperature=0.0, max_output_tokens=64)
+_CAP = Settings().max_output_tokens_cap
 
 
 def _model(name: str = "m") -> Model:
     return Model(name=name, provider=Provider.HUGGINGFACE, model_id="x/y", tokenizer_id="x/y")
 
 
-def _prompt(
-    text: str = "hello", *, template: str | None = None, variables: dict[str, str] | None = None
-) -> PromptInput:
-    return PromptInput(input_text=text, template=template, variables=variables or {})
+def _service(model_service: ModelService) -> InferenceService:
+    return InferenceService(model_service, PresetService(_CAP), _CAP)
 
 
-def _service(model_service: ModelService, *, templates: dict[str, PromptTemplate] | None = None) -> InferenceService:
-    return InferenceService(model_service, PromptLibrary(templates or {}))
+def _patch_preset_repo(monkeypatch: pytest.MonkeyPatch, preset: GenerationPreset | None) -> MagicMock:
+    """Mock the preset repo seam PresetService.get resolves through."""
+    repository = MagicMock()
+    repository.get = AsyncMock(return_value=preset)
+    monkeypatch.setattr(preset_service_module, "PresetRepository", lambda session: repository)
+    return repository
 
 
 def _patch_model_repo(monkeypatch: pytest.MonkeyPatch, model: Model | None) -> MagicMock:
@@ -83,7 +85,7 @@ async def test_infer_raises_when_model_missing(
     repository = _patch_model_repo(monkeypatch, None)
 
     with pytest.raises(ModelNotFoundError):
-        await _service(fake_model_service).infer(MagicMock(spec=AsyncSession), model_name="missing", prompt=_prompt())
+        await _service(fake_model_service).infer(MagicMock(spec=AsyncSession), model_name="missing", input_text="hello")
     repository.require_by_name.assert_called_once_with("missing")
 
 
@@ -96,16 +98,14 @@ async def test_infer_raises_when_model_inactive(
     _patch_model_repo(monkeypatch, inactive)
 
     with pytest.raises(ModelInactiveError):
-        await _service(fake_model_service).infer(MagicMock(spec=AsyncSession), model_name="m", prompt=_prompt())
+        await _service(fake_model_service).infer(MagicMock(spec=AsyncSession), model_name="m", input_text="hello")
 
 
 async def test_infer_rejects_oversized_input(fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_model_repo(monkeypatch, _model())
 
     with pytest.raises(InputTooLargeError):
-        await _service(fake_model_service).infer(
-            MagicMock(spec=AsyncSession), model_name="m", prompt=_prompt("x" * 60_000)
-        )
+        await _service(fake_model_service).infer(MagicMock(spec=AsyncSession), model_name="m", input_text="x" * 60_000)
 
 
 async def test_infer_persists_inference(fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,7 +113,9 @@ async def test_infer_persists_inference(fake_model_service: ModelService, monkey
     _patch_model_repo(monkeypatch, model)
     added = _patch_inference_repo(monkeypatch)
 
-    inference = await _service(fake_model_service).infer(MagicMock(spec=AsyncSession), model_name="m", prompt=_prompt())
+    inference = await _service(fake_model_service).infer(
+        MagicMock(spec=AsyncSession), model_name="m", input_text="hello"
+    )
 
     assert inference.model_id == model.id
     assert added
@@ -125,96 +127,13 @@ async def test_infer_sends_raw_input_as_a_single_user_turn(settings: Settings, m
     _patch_inference_repo(monkeypatch)
     model_service = _CapturingModelService(settings)
 
-    await _service(model_service).infer(MagicMock(spec=AsyncSession), model_name="m", prompt=_prompt("hello"))
+    await _service(model_service).infer(MagicMock(spec=AsyncSession), model_name="m", input_text="hello")
 
-    # No template: the raw input is the single user turn, with no system framing.
+    # The raw input is the single user turn, with no system framing.
     assert model_service.messages == [[{"role": "user", "content": "hello"}]]
 
 
-async def test_infer_renders_a_named_template_with_variables(
-    settings: Settings, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _patch_model_repo(monkeypatch, _model())
-    _patch_inference_repo(monkeypatch)
-    model_service = _CapturingModelService(settings)
-    templates = {
-        "translate": PromptTemplate(
-            name="translate",
-            user_template="To {language}:\n\n{input_text}",
-            system_template="Be {tone}.",
-        )
-    }
-
-    await _service(model_service, templates=templates).infer(
-        MagicMock(spec=AsyncSession),
-        model_name="m",
-        prompt=_prompt("hola", template="translate", variables={"language": "English", "tone": "formal"}),
-    )
-
-    assert model_service.messages == [
-        [
-            {"role": "system", "content": "Be formal."},
-            {"role": "user", "content": "To English:\n\nhola"},
-        ]
-    ]
-
-
-async def test_infer_renders_a_template_without_a_system_message(
-    settings: Settings, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _patch_model_repo(monkeypatch, _model())
-    _patch_inference_repo(monkeypatch)
-    model_service = _CapturingModelService(settings)
-    templates = {"bare": PromptTemplate(name="bare", user_template="Q: {input_text}")}
-
-    await _service(model_service, templates=templates).infer(
-        MagicMock(spec=AsyncSession), model_name="m", prompt=_prompt("why", template="bare")
-    )
-
-    assert model_service.messages == [[{"role": "user", "content": "Q: why"}]]
-
-
-async def test_run_named_allows_an_inactive_model(
-    fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    inactive = Model(
-        name="m", provider=Provider.HUGGINGFACE, model_id="x/y", tokenizer_id="x/y", status=ModelStatus.INACTIVE
-    )
-    _patch_model_repo(monkeypatch, inactive)
-    added = _patch_inference_repo(monkeypatch)
-
-    inference = await _service(fake_model_service).run_named(
-        MagicMock(spec=AsyncSession),
-        model_name="m",
-        prompt=_prompt(),
-        config=_config(),
-        allow_inactive=True,
-    )
-
-    assert inference.model_id == inactive.id
-    assert added
-    assert added[0] is inference
-
-
-async def test_run_named_rejects_an_inactive_model_when_not_allowed(
-    fake_model_service: ModelService, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    inactive = Model(
-        name="m", provider=Provider.HUGGINGFACE, model_id="x/y", tokenizer_id="x/y", status=ModelStatus.INACTIVE
-    )
-    _patch_model_repo(monkeypatch, inactive)
-
-    with pytest.raises(ModelInactiveError):
-        await _service(fake_model_service).run_named(
-            MagicMock(spec=AsyncSession),
-            model_name="m",
-            prompt=_prompt(),
-            config=_config(),
-            allow_inactive=False,
-        )
-
-
-async def test_infer_uses_server_default_config_when_temperature_omitted(
+async def test_infer_uses_server_default_config_when_no_overrides(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _patch_model_repo(monkeypatch, _model())
@@ -222,21 +141,86 @@ async def test_infer_uses_server_default_config_when_temperature_omitted(
     server = settings.model_copy(update={"temperature": 0.5, "max_output_tokens": 512})
     model_service = _CapturingModelService(server)
 
-    await _service(model_service).infer(MagicMock(spec=AsyncSession), model_name="m", prompt=_prompt())
+    await _service(model_service).infer(MagicMock(spec=AsyncSession), model_name="m", input_text="hello")
 
-    # No caller temperature: the whole config comes from the server settings.
+    # No preset and no model_params: the whole config comes from the server settings.
     assert model_service.configs == [GenerationConfig(temperature=0.5, max_output_tokens=512)]
 
 
-async def test_infer_applies_caller_temperature_over_server_default(
-    settings: Settings, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_model_params_override_server_default(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_model_repo(monkeypatch, _model())
     _patch_inference_repo(monkeypatch)
     server = settings.model_copy(update={"temperature": 0.5, "max_output_tokens": 512})
     model_service = _CapturingModelService(server)
 
-    await _service(model_service).infer(MagicMock(spec=AsyncSession), model_name="m", prompt=_prompt(), temperature=0.9)
+    await _service(model_service).infer(
+        MagicMock(spec=AsyncSession), model_name="m", input_text="hello", model_params={"temperature": 0.9}
+    )
 
-    # Caller temperature wins; output length stays the server default.
+    # The override wins on temperature; the untouched knob stays the server default.
     assert model_service.configs == [GenerationConfig(temperature=0.9, max_output_tokens=512)]
+
+
+async def test_preset_seeds_config_and_is_persisted_on_the_row(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_model_repo(monkeypatch, _model())
+    added = _patch_inference_repo(monkeypatch)
+    preset = GenerationPreset(name="balanced", config=GenerationConfig(do_sample=True, temperature=0.8))
+    _patch_preset_repo(monkeypatch, preset)
+    model_service = _CapturingModelService(settings)
+
+    inference = await _service(model_service).infer(
+        MagicMock(spec=AsyncSession), model_name="m", input_text="hello", preset_id=preset.id
+    )
+
+    # The preset seeds decoding, and its id is recorded on the row for lineage.
+    assert model_service.configs[0].temperature == 0.8
+    assert model_service.configs[0].do_sample is True
+    assert inference.preset_id == preset.id
+    assert added[0].preset_id == preset.id
+
+
+async def test_model_params_win_over_preset(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_model_repo(monkeypatch, _model())
+    _patch_inference_repo(monkeypatch)
+    preset = GenerationPreset(name="balanced", config=GenerationConfig(do_sample=True, temperature=0.8, top_p=0.9))
+    _patch_preset_repo(monkeypatch, preset)
+    model_service = _CapturingModelService(settings)
+
+    await _service(model_service).infer(
+        MagicMock(spec=AsyncSession),
+        model_name="m",
+        input_text="hello",
+        preset_id=preset.id,
+        model_params={"temperature": 1.2},
+    )
+
+    # Override beats the preset on temperature; the preset's other knob is inherited.
+    assert model_service.configs[0].temperature == 1.2
+    assert model_service.configs[0].top_p == 0.9
+
+
+async def test_infer_raises_when_preset_unknown(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_model_repo(monkeypatch, _model())
+    _patch_inference_repo(monkeypatch)
+    _patch_preset_repo(monkeypatch, None)
+    model_service = _CapturingModelService(settings)
+
+    with pytest.raises(PresetNotFoundError):
+        await _service(model_service).infer(
+            MagicMock(spec=AsyncSession), model_name="m", input_text="hello", preset_id=_model().id
+        )
+
+
+async def test_infer_raises_when_preset_archived(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_model_repo(monkeypatch, _model())
+    _patch_inference_repo(monkeypatch)
+    archived = GenerationPreset(name="old", config=GenerationConfig(), status=PresetStatus.ARCHIVED)
+    _patch_preset_repo(monkeypatch, archived)
+    model_service = _CapturingModelService(settings)
+
+    with pytest.raises(PresetNotFoundError):
+        await _service(model_service).infer(
+            MagicMock(spec=AsyncSession), model_name="m", input_text="hello", preset_id=archived.id
+        )

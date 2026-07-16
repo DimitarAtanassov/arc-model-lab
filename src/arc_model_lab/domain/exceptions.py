@@ -38,13 +38,13 @@ class InvalidGenerationConfigError(DomainError):
     """A generation config names an unknown knob or an invalid value (422)."""
 
 
-class PromptTemplateNotFoundError(DomainError):
-    """The requested prompt template is not defined (404)."""
+class PresetNotFoundError(DomainError):
+    """The requested preset does not exist or is archived and hidden (404)."""
 
 
-class PromptRenderError(DomainError):
-    """A prompt template could not be rendered from the given variables (422).
+class PresetNameConflictError(DomainError):
+    """An active preset already uses this name (409).
 
-    Raised when the caller's variables do not exactly match the template's
-    placeholders: a missing variable, an unknown one, or the reserved input_text.
+    Raised by catching the partial-index unique violation on create, so two
+    concurrent creates of the same name both resolve to 409 rather than a 500.
     """

@@ -7,7 +7,14 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from arc_model_lab.db.repositories import InferenceRepository, ModelRepository
-from arc_model_lab.domain import Inference, Model, ModelNotFoundError, ModelStatus, Provider
+from arc_model_lab.domain import (
+    GenerationConfig,
+    Inference,
+    Model,
+    ModelNotFoundError,
+    ModelStatus,
+    Provider,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -99,3 +106,23 @@ async def test_inference_list_recent_orders_newest_first(db_session: AsyncSessio
 
 async def test_inference_get_returns_none_when_absent(db_session: AsyncSession) -> None:
     assert await InferenceRepository(db_session).get(uuid4()) is None
+
+
+async def test_inference_persists_generation_config(db_session: AsyncSession) -> None:
+    # The resolved decoding config is durable: it survives the JSONB round trip so
+    # a stored inference reproduces the call that made it.
+    model = await ModelRepository(db_session).upsert(_model("m"))
+    repo = InferenceRepository(db_session)
+    inference = Inference(
+        model_id=model.id,
+        input_text="in",
+        prompt="p",
+        output_text="out",
+        latency_ms=5,
+        generation_config=GenerationConfig(temperature=0.7, max_output_tokens=128),
+    )
+    await repo.add(inference)
+
+    fetched = await repo.get(inference.id)
+    assert fetched is not None
+    assert fetched.generation_config == GenerationConfig(temperature=0.7, max_output_tokens=128)

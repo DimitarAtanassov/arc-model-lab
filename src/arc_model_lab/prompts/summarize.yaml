@@ -1,8 +1,0 @@
-description: Summarize the input text into a concise, faithful summary.
-system: >-
-  You are a precise assistant that writes clear, concise summaries. Capture the
-  key points and leave out filler.
-user: |-
-  Summarize the following text:
-
-  {input_text}

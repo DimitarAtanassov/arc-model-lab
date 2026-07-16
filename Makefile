@@ -63,6 +63,14 @@ model.seed: prepare
 model.validate: prepare
 	uv run python -m arc_model_lab.db.seed_models --check seeds/models.local.json
 
+.PHONY: preset.seed ## Seed generation presets from seeds/presets.local.json
+preset.seed: prepare
+	uv run python -m arc_model_lab.db.seed_presets seeds/presets.local.json
+
+.PHONY: preset.validate ## Validate the preset seed file without touching the database
+preset.validate: prepare
+	uv run python -m arc_model_lab.db.seed_presets --check seeds/presets.local.json
+
 .PHONY: model.clear-cache ## Remove the local HuggingFace cache
 model.clear-cache:
 	rm -rf .cache/huggingface

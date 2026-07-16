@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict, cast
+from typing import Literal, TypedDict, cast
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
+    set_seed,
+)
 
 from arc_model_lab.config import Device, Settings
 from arc_model_lab.domain import GenerationConfig, GenerationError, Model, ModelLoadError
+from arc_model_lab.domain.generation import to_generate_kwargs
 
 
 class ChatMessage(TypedDict):
@@ -126,13 +133,15 @@ class ModelService:
             ).to(runtime.device)
             prompt_tokens = int(inputs["input_ids"].shape[1])
 
-            # temperature 0 is greedy and deterministic; above 0 enables sampling.
-            generate_kwargs: dict[str, Any] = {
-                "max_new_tokens": resolved.max_output_tokens,
-                "do_sample": resolved.temperature > 0,
-            }
-            if resolved.temperature > 0:
-                generate_kwargs["temperature"] = resolved.temperature
+            generate_kwargs = to_generate_kwargs(resolved)
+            # stop_strings needs the tokenizer to encode the stop sequences.
+            if "stop_strings" in generate_kwargs:
+                generate_kwargs["tokenizer"] = runtime.tokenizer
+            # A seed makes sampling reproducible on the same device and dtype. It
+            # mutates process-global RNG, so the guarantee holds only when no other
+            # seeded generation runs concurrently on this worker (see spec 0001 §1.5).
+            if resolved.seed is not None:
+                set_seed(resolved.seed)
 
             start = time.perf_counter()
             with torch.no_grad():

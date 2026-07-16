@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
+from arc_model_lab.api.schemas.generation import GenerationParams
 from arc_model_lab.domain import Inference
-from arc_model_lab.domain.generation import (
-    DEFAULT_MAX_OUTPUT_TOKENS,
-    DEFAULT_TEMPERATURE,
-    MAX_TEMPERATURE,
-    GenerationConfig,
-)
 
 _PREVIEW_CHARS = 160
 
@@ -25,80 +21,28 @@ def _preview(text: str, limit: int = _PREVIEW_CHARS) -> str:
 
 
 class InferenceRequest(BaseModel):
-    # The caller names the model and may set the sampling temperature; when it is
-    # omitted the server default (ARC_TEMPERATURE) applies. extra="forbid"
-    # rejects an unknown field (including max_output_tokens, a server-only
-    # knob) with 422 rather than silently ignoring it.
+    # The caller names the model and may inform decoding two ways, in precedence
+    # order: an ad-hoc `model_params` override wins over a stored `preset_id`, and
+    # both win over the server defaults (ARC_TEMPERATURE, ARC_MAX_OUTPUT_TOKENS).
+    # `temperature` is not a top-level field; it is a key inside `model_params`.
+    # extra="forbid" rejects an unknown field (including a legacy top-level
+    # `temperature` or `max_output_tokens`) with 422 rather than silently ignoring it.
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
     model_name: str = Field(min_length=1, description="Catalog model to run.")
     input_text: str = Field(min_length=1, description="Text to run through the model.")
-    temperature: float | None = Field(
+    preset_id: UUID | None = Field(
         default=None,
-        ge=0.0,
-        le=MAX_TEMPERATURE,
+        description="Optional stored preset to seed decoding; unknown or archived is 404.",
+    )
+    model_params: GenerationParams | None = Field(
+        default=None,
         description=(
-            "Sampling temperature: 0 is greedy/deterministic, higher is more random. "
-            "Omit to use the server default (ARC_TEMPERATURE)."
+            "Optional ad-hoc decoding overrides, validated against the parameter "
+            "registry allow-list. Wins over the preset; an out-of-range or "
+            "contradictory value is 422."
         ),
     )
-    prompt_template: str | None = Field(
-        default=None,
-        min_length=1,
-        description="Optional prompt template name; omit to send input_text to the model as-is.",
-    )
-    variables: dict[str, str] = Field(
-        default_factory=dict,
-        description="Values filling the template's placeholders; input_text is supplied separately.",
-    )
-
-    @model_validator(mode="after")
-    def _variables_require_a_template(self) -> InferenceRequest:
-        if self.variables and self.prompt_template is None:
-            raise ValueError("variables require a prompt_template")
-        return self
-
-
-class GenerationConfigSchema(BaseModel):
-    """The decoding config a service-to-service caller sends explicitly."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=MAX_TEMPERATURE)
-    max_output_tokens: int = Field(default=DEFAULT_MAX_OUTPUT_TOKENS, ge=1)
-
-    def to_domain(self) -> GenerationConfig:
-        return GenerationConfig(temperature=self.temperature, max_output_tokens=self.max_output_tokens)
-
-
-class InferenceRunRequest(BaseModel):
-    # Service-to-service body for POST /v1/inference:run. Unlike /inference it
-    # carries a full generation config (temperature and max_output_tokens) and may
-    # run an inactive candidate model.
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
-
-    model_name: str = Field(min_length=1, description="Catalog model to run.")
-    input_text: str = Field(min_length=1, description="Text to run through the model.")
-    generation_config: GenerationConfigSchema = Field(default_factory=GenerationConfigSchema)
-    allow_inactive: bool = Field(
-        default=False,
-        description="Run the model even if it is not active. Off by default so the endpoint fails closed.",
-    )
-    prompt_template: str | None = Field(
-        default=None,
-        min_length=1,
-        description="Optional prompt template name; omit to send input_text to the model as-is.",
-    )
-    variables: dict[str, str] = Field(
-        default_factory=dict,
-        description="Values filling the template's placeholders; input_text is supplied separately.",
-    )
-
-    @model_validator(mode="after")
-    def _variables_require_a_template(self) -> InferenceRunRequest:
-        if self.variables and self.prompt_template is None:
-            raise ValueError("variables require a prompt_template")
-        return self
 
 
 class InferenceResponse(BaseModel):
@@ -112,11 +56,28 @@ class InferenceResponse(BaseModel):
     latency_ms: int
     prompt_tokens: int | None
     completion_tokens: int | None
+    # The resolved config the row actually ran with (the to_dict payload), so the
+    # response alone shows exactly what ran and can seed a "save as preset" action.
+    generation_config: dict[str, Any]
+    # The preset that informed this row, if any (lineage, not reproducibility).
+    preset_id: UUID | None
     created_at: datetime
 
     @classmethod
     def from_inference(cls, inference: Inference) -> InferenceResponse:
-        return cls.model_validate(inference)
+        return cls(
+            id=inference.id,
+            model_id=inference.model_id,
+            input_text=inference.input_text,
+            prompt=inference.prompt,
+            output_text=inference.output_text,
+            latency_ms=inference.latency_ms,
+            prompt_tokens=inference.prompt_tokens,
+            completion_tokens=inference.completion_tokens,
+            generation_config=inference.generation_config.to_dict(),
+            preset_id=inference.preset_id,
+            created_at=inference.created_at,
+        )
 
 
 class InferenceListItem(BaseModel):

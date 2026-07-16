@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -60,14 +62,70 @@ async def test_unknown_model_returns_404(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
-async def test_temperature_out_of_range_returns_422(client: AsyncClient) -> None:
-    response = await client.post("/inference", json=_body(temperature=5.0))
+async def test_top_level_temperature_is_rejected(client: AsyncClient) -> None:
+    # Regression: temperature is no longer a top-level field; it lives only inside
+    # model_params. A legacy top-level temperature is an unknown field (422).
+    response = await client.post("/inference", json=_body(temperature=0.7))
     assert response.status_code == 422
 
 
-async def test_explicit_temperature_is_accepted(client: AsyncClient) -> None:
-    response = await client.post("/inference", json=_body(temperature=0.7))
+async def test_model_params_temperature_is_accepted(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body(model_params={"temperature": 0.7}))
     assert response.status_code == 201
+
+
+async def test_model_params_temperature_out_of_range_returns_422(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body(model_params={"temperature": 5.0}))
+    assert response.status_code == 422
+
+
+async def test_model_params_unknown_knob_returns_422(client: AsyncClient) -> None:
+    # model_params is the registry allow-list; an unknown knob is a 422.
+    response = await client.post("/inference", json=_body(model_params={"nonsense": 1}))
+    assert response.status_code == 422
+
+
+async def test_model_params_illegal_combination_returns_422(client: AsyncClient) -> None:
+    # Beam search cannot combine with sampling params; the merged config is a 422.
+    response = await client.post("/inference", json=_body(model_params={"num_beams": 2, "top_p": 0.9}))
+    assert response.status_code == 422
+
+
+async def test_unknown_preset_returns_404(client: AsyncClient) -> None:
+    response = await client.post("/inference", json=_body(preset_id=_UNKNOWN_ID))
+    assert response.status_code == 404
+
+
+async def test_preset_seeds_config_and_is_recorded_on_the_response(client: AsyncClient) -> None:
+    created = await client.post(
+        "/presets",
+        json={"name": "balanced", "config": {"do_sample": True, "temperature": 0.8}},
+    )
+    assert created.status_code == 201
+    preset_id = created.json()["id"]
+
+    response = await client.post("/inference", json=_body(preset_id=preset_id))
+
+    assert response.status_code == 201
+    body = response.json()
+    # The response carries the resolved config and the informing preset id.
+    assert body["preset_id"] == preset_id
+    assert body["generation_config"]["temperature"] == 0.8
+    assert body["generation_config"]["do_sample"] is True
+
+
+async def test_model_params_win_over_preset_in_the_response(client: AsyncClient) -> None:
+    created = await client.post(
+        "/presets",
+        json={"name": "seed", "config": {"do_sample": True, "temperature": 0.8, "top_p": 0.9}},
+    )
+    preset_id = created.json()["id"]
+
+    body = (await client.post("/inference", json=_body(preset_id=preset_id, model_params={"temperature": 1.2}))).json()
+
+    # Override beats the preset on temperature; the preset's other knob is inherited.
+    assert body["generation_config"]["temperature"] == 1.2
+    assert body["generation_config"]["top_p"] == 0.9
 
 
 async def test_metrics_field_is_rejected(client: AsyncClient) -> None:
@@ -106,109 +164,23 @@ async def test_inactive_model_returns_409(
     assert response.status_code == 409
 
 
-async def test_run_returns_201_and_the_inference(client: AsyncClient) -> None:
-    response = await client.post("/v1/inference:run", json={"model_name": _MODEL, "input_text": "summarize me"})
-    assert response.status_code == 201
-    body = response.json()
-    assert body["output_text"] == "fake summary"
-    assert "evaluation" not in body
-
-
-async def test_run_accepts_a_generation_config(client: AsyncClient) -> None:
-    response = await client.post(
-        "/v1/inference:run",
-        json={
-            "model_name": _MODEL,
-            "input_text": "hi",
-            "generation_config": {"temperature": 0.5, "max_output_tokens": 128},
-        },
-    )
-    assert response.status_code == 201
-
-
-async def test_run_allows_an_inactive_model(
-    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
-) -> None:
-    await _inactive_model(session_factory, "candidate")
-    response = await client.post(
-        "/v1/inference:run",
-        json={"model_name": "candidate", "input_text": "hi", "allow_inactive": True},
-    )
-    assert response.status_code == 201
-
-
-async def test_run_rejects_an_inactive_model_when_not_allowed(
-    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
-) -> None:
-    await _inactive_model(session_factory, "candidate2")
-    response = await client.post(
-        "/v1/inference:run",
-        json={"model_name": "candidate2", "input_text": "hi", "allow_inactive": False},
-    )
-    assert response.status_code == 409
-
-
-async def test_run_unknown_model_returns_404(client: AsyncClient) -> None:
-    response = await client.post("/v1/inference:run", json={"model_name": "ghost", "input_text": "hi"})
-    assert response.status_code == 404
-
-
-async def test_run_defaults_to_active_only_when_allow_inactive_omitted(
-    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
-) -> None:
-    # allow_inactive defaults to False: omitting it fails closed on an inactive model.
-    await _inactive_model(session_factory, "candidate3")
-    response = await client.post(
-        "/v1/inference:run",
-        json={"model_name": "candidate3", "input_text": "hi"},
-    )
-    assert response.status_code == 409
-
-
-async def test_inference_with_a_prompt_template_returns_201(client: AsyncClient) -> None:
+async def test_prompt_template_field_is_rejected(client: AsyncClient) -> None:
+    # Prompt templating moved out of the lab; a stale prompt_template is forbidden.
     response = await client.post("/inference", json=_body(prompt_template="summarize"))
-    assert response.status_code == 201
-
-
-async def test_inference_with_a_template_and_variables_returns_201(client: AsyncClient) -> None:
-    response = await client.post(
-        "/inference",
-        json=_body(prompt_template="translate", variables={"target_language": "French"}),
-    )
-    assert response.status_code == 201
-
-
-async def test_inference_missing_template_variable_returns_422(client: AsyncClient) -> None:
-    # translate needs target_language; omitting it is a render error, not a 500.
-    response = await client.post("/inference", json=_body(prompt_template="translate"))
     assert response.status_code == 422
 
 
-async def test_inference_unknown_template_returns_404(client: AsyncClient) -> None:
-    response = await client.post("/inference", json=_body(prompt_template="does-not-exist"))
-    assert response.status_code == 404
-
-
-async def test_inference_variables_without_a_template_returns_422(client: AsyncClient) -> None:
-    # variables only make sense with a template; the schema rejects the mismatch.
+async def test_variables_field_is_rejected(client: AsyncClient) -> None:
+    # variables only made sense with a template; the field no longer exists.
     response = await client.post("/inference", json=_body(variables={"target_language": "French"}))
     assert response.status_code == 422
 
 
-async def test_run_endpoint_accepts_a_prompt_template(client: AsyncClient) -> None:
-    response = await client.post(
-        "/v1/inference:run",
-        json={"model_name": _MODEL, "input_text": "hi", "prompt_template": "summarize"},
-    )
-    assert response.status_code == 201
-
-
-async def test_run_endpoint_rejects_variables_without_a_template(client: AsyncClient) -> None:
-    response = await client.post(
-        "/v1/inference:run",
-        json={"model_name": _MODEL, "input_text": "hi", "variables": {"target_language": "French"}},
-    )
-    assert response.status_code == 422
+async def test_service_to_service_run_endpoint_is_gone(client: AsyncClient) -> None:
+    # The /v1/inference:run seam had a single consumer (arc-eval-service) that no
+    # longer calls the lab, so the endpoint was removed.
+    response = await client.post("/v1/inference:run", json={"model_name": _MODEL, "input_text": "hi"})
+    assert response.status_code == 404
 
 
 async def _persist_inference(
@@ -270,3 +242,27 @@ async def test_get_inference_returns_the_inference(
 
 async def test_get_unknown_inference_returns_404(client: AsyncClient) -> None:
     assert (await client.get(f"/inference/{_UNKNOWN_ID}")).status_code == 404
+
+
+async def test_resolved_config_and_preset_id_persist_on_the_row(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    # Persist a preset, run an inference that layers an override on it, then read the
+    # row straight from the DB to prove the resolved config and lineage link are stored.
+    created = await client.post(
+        "/presets",
+        json={"name": "balanced", "config": {"do_sample": True, "temperature": 0.8, "top_p": 0.9}},
+    )
+    preset_id = created.json()["id"]
+
+    body = (await client.post("/inference", json=_body(preset_id=preset_id, model_params={"temperature": 1.2}))).json()
+
+    async with session_factory() as session:
+        row = await InferenceRepository(session).get(UUID(body["id"]))
+
+    assert row is not None
+    assert row.preset_id == UUID(preset_id)
+    # The row stores the resolved config (override > preset), not the raw inputs.
+    assert row.generation_config.temperature == 1.2
+    assert row.generation_config.top_p == 0.9
+    assert row.generation_config.do_sample is True

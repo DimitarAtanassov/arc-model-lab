@@ -10,16 +10,14 @@ module layout is in [architecture.md](architecture.md).
 
 ## End-to-end data flow
 
-Two endpoints write an inference row through the same path. `POST /inference` is
-online serving (active models only, server-default decoding with an optional
-`temperature` override). `POST /v1/inference:run` is the service-to-service seam
-arc-eval-service calls to run a candidate model with an explicit generation config,
-optionally allowing an inactive model. Both are fail-closed: a failure returns an
-error and stores nothing.
+`POST /inference` writes one inference row. It is online serving: active models
+only, server-default decoding with an optional `temperature` override. It is
+fail-closed: a failure returns an error and stores nothing. The lab and
+arc-eval-service do not call each other; arc-platform orchestrates them.
 
 ```mermaid
 flowchart LR
-    Client[Client / arc-eval-service] --> API["FastAPI (/inference, /v1/inference:run)"]
+    Client[Client / arc-platform] --> API["FastAPI (/inference)"]
     API --> InfSvc[InferenceService]
     InfSvc --> ModelRepo[ModelRepository]
     InfSvc --> MS[ModelService]
@@ -41,9 +39,9 @@ sequenceDiagram
     participant IRepo as InferenceRepository
     participant DB as Postgres
 
-    Client->>API: POST /inference or /v1/inference:run
-    API->>Inf: summarize / run_named
-    Inf->>Inf: resolve model by name (active gate per endpoint)
+    Client->>API: POST /inference
+    API->>Inf: infer
+    Inf->>Inf: resolve model by name (active only)
     Inf->>MS: generate(model, messages, config)
     MS-->>Inf: GenerationResult
     Inf->>IRepo: add(inference)
@@ -66,15 +64,13 @@ table is append-only in normal operation.
 
 ## Model resolution
 
-The two endpoints differ only in how they resolve the model:
+`POST /inference` resolves the model by name and serves it only when active:
 
 | Endpoint | Model gate | Decoding |
 | --- | --- | --- |
 | `POST /inference` | Active only; a non-active model is `409` | Server default; caller may override `temperature` |
-| `POST /v1/inference:run` | Active, unless the caller sets `allow_inactive` | Explicit `GenerationConfig` (`temperature`, `max_output_tokens`) |
 
-An unknown model name is `404` on both. `allow_inactive` lets arc-eval-service run
-a candidate model before it is activated.
+An unknown model name is `404`.
 
 ## Data lineage
 
@@ -85,7 +81,9 @@ erDiagram
     models ||--o{ inference : produces
 ```
 
-Scores are not stored here. arc-eval-service receives an inference's id in the
-response and keeps it as correlation metadata when it scores the output; the
-authoritative scores live in that service's own database. The `models` and
-`inference` columns are in [database-erd.md](database-erd.md).
+Scores are not stored here. arc-platform collects the output and hands the
+inference's input and output to arc-eval-service as data to score; the authoritative
+scores live in that service's own database, which carries no reference back to this
+one. Each inference row also records the resolved decoding config it was produced
+with (`generation_config`). The `models` and `inference` columns are in
+[database-erd.md](database-erd.md).

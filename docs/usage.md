@@ -3,17 +3,18 @@
 Audience: engineers new to arc-model-lab. Reading time: 4 minutes.
 
 The lab does one thing: run a model on some text and store the result. It never
-scores its output. Scoring and experiments live in the separate arc-eval-service,
-which calls back into the lab (`POST /v1/inference:run`) to run a candidate model.
+scores its output. Scoring and experiments live in the separate arc-eval-service.
+The two services do not call each other; arc-platform orchestrates them.
 
 ## Endpoints at a glance
 
 | Method and path | What it is for |
 | --- | --- |
 | `POST /inference` | Run an active model once and store the output (online serving). |
-| `POST /v1/inference:run` | Service-to-service: run a named model with an explicit generation config, optionally allowing an inactive model. |
 | `GET /inference` | List recent inferences, newest first. |
 | `GET /inference/{id}` | Fetch one inference by id. |
+| `GET /models` | List the catalog models. |
+| `GET /models/{name}` | Fetch one catalog model by name. |
 | `GET /health` | Liveness check. |
 
 ## Before you start
@@ -69,27 +70,6 @@ curl -s http://localhost:8000/inference/8f0c1e2a-...     # one inference by id
 curl -s "http://localhost:8000/inference?limit=20"       # recent, newest first
 ```
 
-## Service-to-service: `/v1/inference:run`
-
-arc-eval-service calls this to run a candidate model for an experiment. It takes an
-explicit `generation_config` and an `allow_inactive` flag, so it can run a model
-that is not yet active. The response is the same inference row shape.
-
-```bash
-curl -s http://localhost:8000/v1/inference:run \
-  -H 'content-type: application/json' \
-  -d '{
-    "model_name": "qwen2.5-1.5b-instruct",
-    "input_text": "A long article about battery recycling.",
-    "generation_config": {"temperature": 0.0, "max_output_tokens": 256},
-    "allow_inactive": true
-  }'
-```
-
-`allow_inactive` defaults to `false` (the endpoint fails closed, like `/inference`);
-arc-eval-service opts in by sending `allow_inactive: true`. `generation_config`
-defaults to the server decoding config when omitted.
-
 ## Manage the catalog
 
 The catalog is defined in `seeds/models.local.json` and applied with
@@ -102,7 +82,7 @@ model, edit that file and re-run `make model.seed`.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `404` model not found | Name not in the catalog | `make model.seed` (registers the seed models) |
-| `409` model is not active | Model status is not `active` | Set `status` to `active` in `seeds/models.local.json` and re-run `make model.seed`, or call `/v1/inference:run` with `allow_inactive` |
+| `409` model is not active | Model status is not `active` | Set `status` to `active` in `seeds/models.local.json` and re-run `make model.seed` |
 | `413` too large | Input over 50,000 characters | Shorten the input |
 | `422` invalid body | Missing field, or a stale `metrics`/`max_output_tokens` on `/inference` | `/inference` takes only `model_name`, `input_text`, and optional `temperature` |
 

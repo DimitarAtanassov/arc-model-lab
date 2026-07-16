@@ -4,8 +4,9 @@ Audience: backend engineers running or extending the service. Reading time: 5 mi
 
 A small, production-shaped service that loads a HuggingFace model, runs inference
 through `POST /inference`, and records every inference in Postgres. Scoring and
-experimentation live in the separate arc-eval-service, which calls back into this
-service (`POST /v1/inference:run`) to run a candidate model.
+experimentation live in the separate arc-eval-service; the two services do not
+call each other directly. arc-platform orchestrates them: it runs an inference
+here, then hands that inference's input and output to arc-eval-service to score.
 
 It stays intentionally small: a compact domain, a couple of inference endpoints,
 clean module boundaries, and no speculative abstraction.
@@ -28,8 +29,8 @@ on nothing but the standard library and Pydantic.
 ### Request flow (`POST /inference`)
 
 1. Accept `model_name`, `input_text`, and an optional `temperature`.
-2. Build chat messages (system + user) for the summarization task.
-3. Render the chat template and generate via the (pre-loaded) `ModelService`.
+2. Send `input_text` to the model as a single user turn.
+3. Render the tokenizer chat template and generate via the (pre-loaded) `ModelService`.
 4. Persist an `Inference` row (input, rendered prompt, output, tokens, latency).
 5. Return the stored record. `/inference` never evaluates; scoring lives in the
    separate arc-eval-service.
@@ -90,9 +91,10 @@ Model weights download once into the `hf_cache` volume, never into the image.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/inference` | Run the model named by `model_name` on `input_text`; persists and returns one inference |
-| `POST` | `/v1/inference:run` | Service-to-service: run a named model (optionally inactive) with an explicit generation config |
 | `GET` | `/inference` | List recent inferences, newest first |
 | `GET` | `/inference/{id}` | Return one inference by id |
+| `GET` | `/models` | List the catalog models |
+| `GET` | `/models/{name}` | Return one catalog model by name |
 | `GET` | `/health` | Liveness probe |
 | `GET` | `/docs` | Interactive OpenAPI docs |
 

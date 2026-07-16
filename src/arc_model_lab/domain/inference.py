@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from arc_model_lab.domain.generation import GenerationConfig
+
 
 @dataclass(frozen=True, slots=True)
 class Inference:
@@ -14,5 +16,12 @@ class Inference:
     latency_ms: int
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # The resolved decoding config used for this generation (after server
+    # defaults), so the row alone reproduces the call.
+    generation_config: GenerationConfig = field(default_factory=GenerationConfig)
+    # Lineage link to the preset that informed this row, if any. Null for a row run
+    # from ad-hoc params or server defaults. Not the reproducibility source, which is
+    # generation_config above; this is for "which preset produced this row" analytics.
+    preset_id: UUID | None = None
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
